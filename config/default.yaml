@@ -1,0 +1,42 @@
+# Default experiment configuration.
+# Two sections map onto MarketConfig and ExecutionConfig. Load with:
+#   from rl_execution.utils import load_config
+#   market, execution = load_config("config/default.yaml")
+
+market:
+  initial_price: 100.0
+  tick_size: 0.01
+  n_levels: 10
+  base_spread: 0.02
+  spread_vol: 0.30
+  base_depth: 500.0
+  level_growth: 0.15
+  depth_vol: 0.25
+  volatility: 0.02
+  drift: 0.0
+  mean_reversion: 0.0
+  vol_of_vol: 0.2
+  permanent_impact: 5.0e-6
+  temporary_impact: 1.0e-5
+  imbalance_persistence: 0.85
+  imbalance_strength: 0.40
+  imbalance_alpha: 0.05
+  base_market_volume: 2000.0
+  volume_vol: 0.35
+  volume_u_shape: 0.5
+
+execution:
+  total_inventory: 10000.0
+  horizon: 20
+  side: sell                 # buy | sell
+  action_type: continuous    # discrete | continuous
+  n_discrete_actions: 11
+  commission_per_share: 0.0
+  commission_bps: 1.0
+  latency_steps: 0.0
+  force_liquidation: true
+  reward:
+    risk_aversion: 0.5
+    temp_impact_penalty: 1.0
+    unexecuted_penalty: 10.0
+    reward_scale: 10000.0
