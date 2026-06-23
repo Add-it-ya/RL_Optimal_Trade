@@ -27,6 +27,12 @@ results/*.pkl
 results/*.log
 reports/figures/*.png
 
+# Experiment tracking / model registry stores (local, regenerated)
+mlruns/
+mlartifacts/
+mlflow.db
+wandb/
+
 # Keep directory placeholders
 !**/.gitkeep
 

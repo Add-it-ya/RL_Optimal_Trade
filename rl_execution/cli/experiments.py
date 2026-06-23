@@ -19,14 +19,21 @@ import time
 
 from rl_execution import viz
 from rl_execution.agents import AgentStrategy, required_action_type
-from rl_execution.config import ExecutionConfig, Side
+from rl_execution.config import ExecutionConfig, RunConfig, Side
 from rl_execution.experiments import (
     build_baselines,
     evaluate_across_regimes,
     list_regimes,
     regime_results_frame,
 )
-from rl_execution.training import load_agent, make_env, save_agent, train_agent
+from rl_execution.tracking import get_tracker
+from rl_execution.training import (
+    load_agent,
+    make_env,
+    model_artifact_path,
+    save_agent,
+    train_agent,
+)
 from rl_execution.utils.io import (
     FIGURES_DIR,
     RESULTS_DIR,
@@ -34,6 +41,8 @@ from rl_execution.utils.io import (
     save_json,
     save_pickle,
 )
+from rl_execution.utils.provenance import config_hash, git_sha
+from rl_execution.utils.seeding import set_global_seeds
 from rl_execution.utils.warnings import configure_cli_warnings
 
 DISPLAY = {"dqn": "DQN", "doubledqn": "DoubleDQN", "ppo": "PPO", "a2c": "A2C", "sac": "SAC"}
@@ -57,6 +66,14 @@ def parse_args():
     )
     p.add_argument("--no-train", action="store_true", help="reuse saved models")
     p.add_argument("--quick", action="store_true", help="tiny budget for a fast demo")
+    p.add_argument(
+        "--tracker",
+        default="auto",
+        choices=["auto", "mlflow", "wandb", "null"],
+        help="experiment tracker backend (default: auto -> MLflow-local unless WANDB_API_KEY)",
+    )
+    p.add_argument("--experiment", default="rl-execution", help="experiment / W&B project name")
+    p.add_argument("--no-register", action="store_true", help="skip model-registry versioning")
     return p.parse_args()
 
 
@@ -67,12 +84,30 @@ def main():
         args.timesteps = min(args.timesteps, 8_000)
         args.episodes = min(args.episodes, 40)
 
+    set_global_seeds(args.seed)
     regimes = args.regimes or list_regimes()
     exec_config = ExecutionConfig(
         total_inventory=args.inventory, horizon=args.horizon, side=Side(args.side)
     )
     ensure_dir(RESULTS_DIR)
     ensure_dir(FIGURES_DIR)
+
+    # ---- experiment tracking ----------------------------------------------------
+    tracker = get_tracker(args.tracker, experiment=args.experiment)
+    register = not args.no_register
+    tracker.start_run(
+        name="experiments",
+        config={
+            "agents": args.agents,
+            "regimes": regimes,
+            "timesteps": args.timesteps,
+            "episodes": args.episodes,
+            "seed": args.seed,
+            "device": args.device,
+            "execution": exec_config.to_dict(),
+        },
+        tags={"agents": ",".join(args.agents), "seed": args.seed, "git_sha": git_sha()},
+    )
 
     # ---- train (or load) agents -------------------------------------------------
     agent_strategies = {}
@@ -96,12 +131,39 @@ def main():
                 seed=args.seed,
                 device=args.device,
             )
+            rc = RunConfig(
+                agent=name,
+                timesteps=args.timesteps,
+                seed=args.seed,
+                randomized=True,
+                eval_episodes=args.episodes,
+                device=args.device,
+                execution=exec_config,
+                tracker=args.tracker,
+                experiment=args.experiment,
+            )
             save_agent(
                 agent,
                 name,
                 tag=name,
                 meta={"episode_rewards": reward_logs[disp], "exec_config": exec_config.to_dict()},
+                seed=args.seed,
+                config=rc,
             )
+            for i, r in enumerate(reward_logs[disp]):
+                tracker.log_metrics({f"train/{name}/episode_reward": r}, step=i)
+            if register:
+                tracker.log_model(
+                    str(model_artifact_path(name, name)),
+                    name=name,
+                    metadata={
+                        "seed": args.seed,
+                        "agent": name,
+                        "git_sha": git_sha(),
+                        "config_hash": config_hash(rc),
+                        "timesteps": args.timesteps,
+                    },
+                )
             print(f"  done in {time.time() - t0:.1f}s")
         agent_strategies[disp] = AgentStrategy(agent, disp)
 
@@ -157,7 +219,21 @@ def main():
 
     # ---- headline summary -------------------------------------------------------
     _print_headline(df, rl_names, rep, results=results)
-    save_json(_summary_dict(df, rl_names), RESULTS_DIR / "summary.json")
+    summary = _summary_dict(df, rl_names)
+    save_json(summary, RESULTS_DIR / "summary.json")
+
+    # ---- log results to the tracker --------------------------------------------
+    for artifact in (RESULTS_DIR / "regime_results.csv", RESULTS_DIR / "summary.json"):
+        tracker.log_artifact(str(artifact))
+    for fig in sorted(FIGURES_DIR.glob("*.png")):
+        tracker.log_artifact(str(fig))
+    if "win_rates" in summary:
+        tracker.log_metrics({f"win_rate/{k}": v for k, v in summary["win_rates"].items()})
+    tracker.log_metrics(
+        {f"mean_IS_bps/{k}": float(v) for k, v in summary.get("mean_IS_bps", {}).items()}
+    )
+    tracker.finish("ok")
+
     print("\nNext: rlx-report")
 
 

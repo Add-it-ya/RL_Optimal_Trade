@@ -24,6 +24,14 @@ dependencies = [
 [project.optional-dependencies]
 rl = ["torch>=2.0", "stable-baselines3>=2.2.1", "tensorboard>=2.13"]
 dashboard = ["streamlit>=1.30"]
+# Experiment tracking, model registry, run-config validation. All free / OSS / free-tier:
+# MLflow runs fully offline (local file store); W&B is opt-in (lazy-imported).
+tracking = [
+    "mlflow>=2.9",
+    "wandb>=0.16",
+    "omegaconf>=2.3",
+    "pydantic>=2.5",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
@@ -89,6 +97,10 @@ module = [
     "seaborn.*",
     "tqdm.*",
     "yaml",
+    # Tracking extras: mlflow uses 3.10+ syntax in its sources (trips a 3.9 target) and
+    # wandb ships partial stubs; treat both as untyped at our boundary.
+    "mlflow.*",
+    "wandb.*",
 ]
 follow_imports = "skip"
 ignore_missing_imports = true

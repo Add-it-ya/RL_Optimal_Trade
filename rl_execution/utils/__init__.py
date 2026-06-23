@@ -1,6 +1,11 @@
-"""Utility helpers: paths, IO, config (de)serialisation."""
+"""Utility helpers: paths, IO, config (de)serialisation, seeding and provenance."""
 
-from rl_execution.utils.config_io import dump_config, load_config
+from rl_execution.utils.config_io import (
+    dump_config,
+    dump_run_config,
+    load_config,
+    load_run_config,
+)
 from rl_execution.utils.io import (
     FIGURES_DIR,
     MODELS_DIR,
@@ -13,6 +18,8 @@ from rl_execution.utils.io import (
     save_json,
     save_pickle,
 )
+from rl_execution.utils.provenance import capture_provenance, config_hash, git_sha
+from rl_execution.utils.seeding import set_global_seeds
 
 __all__ = [
     "PROJECT_ROOT",
@@ -27,4 +34,10 @@ __all__ = [
     "load_pickle",
     "load_config",
     "dump_config",
+    "load_run_config",
+    "dump_run_config",
+    "set_global_seeds",
+    "capture_provenance",
+    "config_hash",
+    "git_sha",
 ]

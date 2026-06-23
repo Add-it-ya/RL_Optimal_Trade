@@ -27,7 +27,7 @@ against the classical execution strategies used on real trading desks.
 
 ---
 
-## 🚀 Quickstart
+## Quickstart
 
 ```bash
 # 1. install

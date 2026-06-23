@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 
 class Side(str, Enum):
@@ -149,3 +149,112 @@ class ExecutionConfig:
         known = {f.name for f in fields(cls)}
         kwargs = {k: v for k, v in d.items() if k in known}
         return cls(**kwargs)
+
+
+@dataclass
+class RunConfig:
+    """Everything needed to reproduce a single training run from one serialised object.
+
+    A run is fully described by ``{agent, hyperparameters, training schedule, seed,
+    market, task, tracker}``.  Round-trips to YAML (see
+    :mod:`rl_execution.utils.config_io`) so ``rlx-train --config run.yaml --seed 3`` is
+    sufficient to reproduce, and validates parameter ranges via :meth:`validate`.
+    """
+
+    # --- what to train ---
+    agent: str = "ppo"
+    agent_kwargs: Dict[str, Any] = field(default_factory=dict)
+
+    # --- training schedule ---
+    timesteps: int = 80_000
+    randomized: bool = True
+    regime: Optional[str] = None
+    seed: int = 0
+    device: str = "cpu"
+
+    # --- evaluation ---
+    eval_episodes: int = 100
+    eval_base_seed: int = 10_000
+
+    # --- market + execution task ---
+    market: MarketConfig = field(default_factory=MarketConfig)
+    execution: ExecutionConfig = field(default_factory=ExecutionConfig)
+
+    # --- experiment tracking ---
+    tracker: str = "auto"  # auto | mlflow | wandb | null
+    experiment: str = "rl-execution"  # experiment / W&B project name
+    tag: Optional[str] = None  # model tag / run name (defaults to the agent name)
+
+    def __post_init__(self) -> None:
+        # allow nested configs to arrive as plain dicts (e.g. from YAML / JSON)
+        if isinstance(self.market, dict):
+            self.market = MarketConfig.from_dict(self.market)
+        if isinstance(self.execution, dict):
+            self.execution = ExecutionConfig.from_dict(self.execution)
+
+    @property
+    def run_tag(self) -> str:
+        """Resolved model tag / run name (falls back to the agent name)."""
+        return self.tag or self.agent
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "agent": self.agent,
+            "agent_kwargs": dict(self.agent_kwargs),
+            "timesteps": self.timesteps,
+            "randomized": self.randomized,
+            "regime": self.regime,
+            "seed": self.seed,
+            "device": self.device,
+            "eval_episodes": self.eval_episodes,
+            "eval_base_seed": self.eval_base_seed,
+            "market": self.market.to_dict(),
+            "execution": self.execution.to_dict(),
+            "tracker": self.tracker,
+            "experiment": self.experiment,
+            "tag": self.tag,
+        }
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "RunConfig":
+        known = {f.name for f in fields(cls)}
+        kwargs = {k: v for k, v in d.items() if k in known}
+        if "market" in kwargs and isinstance(kwargs["market"], dict):
+            kwargs["market"] = MarketConfig.from_dict(kwargs["market"])
+        if "execution" in kwargs and isinstance(kwargs["execution"], dict):
+            kwargs["execution"] = ExecutionConfig.from_dict(kwargs["execution"])
+        return cls(**kwargs)
+
+    def validate(self) -> "RunConfig":
+        """Validate parameter ranges; returns ``self`` so it chains. Raises ``ValueError``.
+
+        Uses :mod:`pydantic` when available (the ``tracking`` extra) for rich, typed
+        messages, and falls back to equivalent manual checks so the core package validates
+        without that optional dependency.
+        """
+        try:
+            from rl_execution.utils.validation import validate_run_config
+
+            validate_run_config(self.to_dict())
+        except ImportError:
+            self._validate_manual()
+        return self
+
+    def _validate_manual(self) -> None:
+        m, e = self.market, self.execution
+        checks = {
+            "timesteps > 0": self.timesteps > 0,
+            "seed >= 0": self.seed >= 0,
+            "eval_episodes > 0": self.eval_episodes > 0,
+            "tracker in {auto, mlflow, wandb, null}": self.tracker
+            in {"auto", "mlflow", "wandb", "null"},
+            "0 <= imbalance_alpha <= 1": 0.0 <= m.imbalance_alpha <= 1.0,
+            "0 <= imbalance_persistence < 1": 0.0 <= m.imbalance_persistence < 1.0,
+            "volatility >= 0": m.volatility >= 0.0,
+            "initial_price > 0": m.initial_price > 0.0,
+            "horizon > 0": e.horizon > 0,
+            "total_inventory > 0": e.total_inventory > 0.0,
+        }
+        failed = [name for name, ok in checks.items() if not ok]
+        if failed:
+            raise ValueError("Invalid RunConfig: " + "; ".join(failed))

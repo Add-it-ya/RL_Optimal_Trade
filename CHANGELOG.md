@@ -7,6 +7,22 @@ All notable changes to this project are documented in this file. The format is b
 ## [Unreleased]
 
 ### Added
+- Reproducibility & experiment tracking:
+  - A swappable experiment-tracking abstraction (`rl_execution.tracking`) with MLflow-local
+    (default, fully offline), Weights & Biases (opt-in, lazy) and Null (CI/tests) backends,
+    selected via `get_tracker`.
+  - A versioned **model registry** (MLflow local file store) with run lineage — models are
+    registered as numbered versions instead of overwriting `models/<agent>.*`.
+  - Deterministic global seeding (`set_global_seeds`: python/numpy/torch/cuDNN/SB3), wired
+    into training so a single seed reproduces a run.
+  - Provenance stamping: every saved model's JSON sidecar now records
+    `{git_sha, git_dirty, config_hash, data_hash, lib_versions, seed, python, platform, created_at}`.
+  - `RunConfig` — a single serialisable object that fully describes a run, round-tripping to
+    YAML (`rlx-train --config run.yaml --seed 3`) with pydantic range validation.
+  - `rlx-train` / `rlx-experiments` now seed, log params/metrics/artifacts to the tracker and
+    register a model version; new flags `--config`, `--tracker`, `--experiment`,
+    `--no-register`, `--save-config`.
+  - Optional `tracking` extra: `pip install -e ".[tracking]"` (mlflow, wandb, omegaconf, pydantic).
 - Continuous-integration workflow (lint, format check, type check, test matrix, coverage).
 - `ruff`, `black`, `mypy` and `pre-commit` configuration with enforced quality gates.
 - Console entry points (`rlx-train`, `rlx-evaluate`, `rlx-experiments`, `rlx-report`) backed by

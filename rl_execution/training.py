@@ -8,7 +8,8 @@ returns, and saves the model plus a JSON sidecar describing how to rebuild it.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import gymnasium as gym
 
@@ -18,6 +19,8 @@ from rl_execution.envs import ExecutionEnv
 from rl_execution.experiments.regimes import get_regime
 from rl_execution.experiments.runner import DomainRandomizedEnv
 from rl_execution.utils.io import MODELS_DIR, ensure_dir, load_json, save_json
+from rl_execution.utils.provenance import capture_provenance
+from rl_execution.utils.seeding import set_global_seeds
 
 _CUSTOM = {"dqn", "doubledqn", "ddqn"}
 
@@ -94,8 +97,17 @@ def train_agent(
 
     ``device`` is "cpu" (recommended for these small MLP policies), "cuda", or "auto".
     """
+    if seed is not None:
+        # Seed every framework RNG (python/numpy/torch/sb3) for reproducible training.
+        set_global_seeds(seed)
     env = make_env(agent_name, exec_config, regime=regime, randomized=randomized, seed=seed)
     logged = EpisodeRewardLogger(env)
+    if seed is not None:
+        # Seed the env's market RNG deterministically: the agents' training loops call
+        # ``reset()`` without a seed, which would otherwise lazily initialise Gymnasium's
+        # np_random from OS entropy. Seeding once here makes every subsequent (unseeded)
+        # episode reset -- and hence the whole price-path sequence -- reproducible.
+        logged.reset(seed=seed)
     kwargs = dict(agent_kwargs or {})
     kwargs.setdefault("device", device)
     agent = make_agent(agent_name, logged, seed=seed, **kwargs)
@@ -104,13 +116,29 @@ def train_agent(
 
 
 # --------------------------------------------------------------------------- persistence
+def model_artifact_path(agent_name: str, tag: Optional[str] = None) -> Path:
+    """The on-disk model file (with extension) that :func:`save_agent` writes for an agent."""
+    tag = tag or _norm(agent_name)
+    ext = ".pt" if _norm(agent_name) in _CUSTOM else ".zip"
+    return MODELS_DIR / f"{tag}{ext}"
+
+
 def save_agent(
     agent,
     agent_name: str,
     tag: Optional[str] = None,
     meta: Optional[Dict[str, Any]] = None,
+    *,
+    seed: Optional[int] = None,
+    config: Any = None,
+    provenance: bool = True,
 ) -> str:
-    """Persist a trained agent and a JSON sidecar; returns the model path (without ext)."""
+    """Persist a trained agent and a JSON sidecar; returns the model path (without ext).
+
+    When ``provenance`` is true the sidecar is stamped with a lineage block
+    ({git_sha, config_hash, lib_versions, seed, ...}) so the artifact is self-describing
+    and auditable.  ``config`` (e.g. a :class:`RunConfig`) is hashed into ``config_hash``.
+    """
     ensure_dir(MODELS_DIR)
     tag = tag or _norm(agent_name)
     backend = "custom" if _norm(agent_name) in _CUSTOM else "sb3"
@@ -118,7 +146,7 @@ def save_agent(
     model_path = str(MODELS_DIR / f"{tag}{ext}")
     agent.save(model_path if backend == "custom" else str(MODELS_DIR / tag))
 
-    sidecar = {
+    sidecar: Dict[str, Any] = {
         "agent_name": agent_name,
         "backend": backend,
         "algo": "dqn" if backend == "sb3" and _norm(agent_name) == "sb3dqn" else _norm(agent_name),
@@ -126,18 +154,25 @@ def save_agent(
     }
     if meta:
         sidecar.update(meta)
+    if provenance:
+        sidecar["provenance"] = capture_provenance(seed=seed, config=config)
     save_json(sidecar, str(MODELS_DIR / f"{tag}.json"))
     return str(MODELS_DIR / tag)
 
 
-def load_agent(tag: str, env) -> Any:
-    """Rebuild a saved agent bound to ``env`` from its JSON sidecar."""
-    meta = load_json(str(MODELS_DIR / f"{tag}.json"))
+def load_agent(tag: str, env, models_dir: Union[str, Path] = MODELS_DIR) -> Any:
+    """Rebuild a saved agent bound to ``env`` from its JSON sidecar.
+
+    ``models_dir`` defaults to the project ``models/`` directory but can point elsewhere
+    (e.g. a temp dir produced by the model registry's ``load_registered``).
+    """
+    models_dir = Path(models_dir)
+    meta = load_json(str(models_dir / f"{tag}.json"))
     backend = meta["backend"]
     if backend == "custom":
         from rl_execution.agents.dqn import DQNAgent
 
-        return DQNAgent.load(str(MODELS_DIR / f"{tag}.pt"), env=env)
+        return DQNAgent.load(str(models_dir / f"{tag}.pt"), env=env)
     from rl_execution.agents.sb3_agents import SB3Agent
 
-    return SB3Agent.load(str(MODELS_DIR / f"{tag}.zip"), env=env, algo=meta["algo"])
+    return SB3Agent.load(str(models_dir / f"{tag}.zip"), env=env, algo=meta["algo"])
