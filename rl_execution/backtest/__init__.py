@@ -2,11 +2,11 @@
 
 from rl_execution.backtest.engine import (
     BacktestResult,
-    run_episode,
-    evaluate,
     compare_strategies,
-    results_table,
+    evaluate,
     paired_is_table,
+    results_table,
+    run_episode,
 )
 
 __all__ = [

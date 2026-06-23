@@ -5,6 +5,7 @@ interface so they can be trained and backtested identically to the from-scratch 
 SAC requires a continuous action space; SB3-DQN requires a discrete one; PPO and A2C
 support both.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
@@ -15,15 +16,35 @@ from rl_execution.agents.base import BaseAgent, resolve_device
 
 # default, CPU-friendly hyper-parameters per algorithm
 _DEFAULT_HP: Dict[str, Dict[str, Any]] = {
-    "ppo": dict(n_steps=512, batch_size=128, gae_lambda=0.95, gamma=0.99,
-                ent_coef=0.0, learning_rate=3e-4, n_epochs=10),
+    "ppo": dict(
+        n_steps=512,
+        batch_size=128,
+        gae_lambda=0.95,
+        gamma=0.99,
+        ent_coef=0.0,
+        learning_rate=3e-4,
+        n_epochs=10,
+    ),
     "a2c": dict(n_steps=16, gamma=0.99, learning_rate=7e-4, ent_coef=0.0),
-    "sac": dict(buffer_size=100_000, batch_size=256, learning_rate=3e-4,
-                gamma=0.99, train_freq=1, learning_starts=1_000),
-    "dqn": dict(buffer_size=100_000, batch_size=128, learning_rate=1e-3,
-                gamma=0.99, train_freq=4, target_update_interval=500,
-                learning_starts=1_000, exploration_fraction=0.5,
-                exploration_final_eps=0.05),
+    "sac": dict(
+        buffer_size=100_000,
+        batch_size=256,
+        learning_rate=3e-4,
+        gamma=0.99,
+        train_freq=1,
+        learning_starts=1_000,
+    ),
+    "dqn": dict(
+        buffer_size=100_000,
+        batch_size=128,
+        learning_rate=1e-3,
+        gamma=0.99,
+        train_freq=4,
+        target_update_interval=500,
+        learning_starts=1_000,
+        exploration_fraction=0.5,
+        exploration_final_eps=0.05,
+    ),
 }
 
 
@@ -76,8 +97,9 @@ class SB3Agent(BaseAgent):
         return self
 
     def predict(self, obs: np.ndarray, deterministic: bool = True):
-        action, _ = self.model.predict(np.asarray(obs, dtype=np.float32),
-                                       deterministic=deterministic)
+        action, _ = self.model.predict(
+            np.asarray(obs, dtype=np.float32), deterministic=deterministic
+        )
         return action
 
     def save(self, path: str) -> None:

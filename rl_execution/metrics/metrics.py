@@ -14,11 +14,11 @@ Definitions
   contemporaneous mid (spread + temporary impact + book-walk), summed over fills.
 * **Sharpe ratio** -- cross-episode risk-adjusted execution quality, mean(-IS) / std(-IS).
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List
 
-import numpy as np
 import pandas as pd
 
 METRIC_COLUMNS = [
@@ -36,9 +36,7 @@ def _sign(side: str) -> int:
     return 1 if str(side).lower() == "sell" else -1
 
 
-def compute_episode_metrics(
-    summary: Dict[str, Any], history: pd.DataFrame
-) -> Dict[str, float]:
+def compute_episode_metrics(summary: Dict[str, Any], history: pd.DataFrame) -> Dict[str, float]:
     """Compute per-episode metrics from an episode summary and step history."""
     side = summary["side"]
     sign = _sign(side)

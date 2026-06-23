@@ -4,6 +4,7 @@ Targets a fixed participation rate of the contemporaneous market volume each ste
 schedule adapts to realised liquidity.  Any inventory still outstanding at the horizon is
 force-liquidated by the environment.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict

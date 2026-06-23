@@ -7,12 +7,13 @@ the rest of the package works without a deep-learning backend.
 Each algorithm requires a particular action-space parametrisation, exposed via
 :data:`ALGO_ACTION_TYPE` so callers can build a compatible :class:`ExecutionEnv`.
 """
+
 from __future__ import annotations
 
 from typing import Optional
 
-from rl_execution.config import ActionType
 from rl_execution.agents.base import AgentStrategy, BaseAgent
+from rl_execution.config import ActionType
 
 # value-based agents need a discrete action grid; policy/actor-critic use continuous
 ALGO_ACTION_TYPE = {

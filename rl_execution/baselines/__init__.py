@@ -1,11 +1,11 @@
 """Classical (non-learning) execution strategies."""
 
+from rl_execution.baselines.almgren_chriss import AlmgrenChriss
 from rl_execution.baselines.base import BaseStrategy
-from rl_execution.baselines.twap import TWAP
-from rl_execution.baselines.vwap import VWAP
 from rl_execution.baselines.pov import POV
 from rl_execution.baselines.random_strategy import RandomStrategy
-from rl_execution.baselines.almgren_chriss import AlmgrenChriss
+from rl_execution.baselines.twap import TWAP
+from rl_execution.baselines.vwap import VWAP
 
 
 def make_baseline(name: str, **kwargs) -> BaseStrategy:

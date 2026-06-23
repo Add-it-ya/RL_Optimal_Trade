@@ -4,6 +4,7 @@ A config file has two top-level sections, ``market`` and ``execution``, mapping 
 :class:`~rl_execution.config.MarketConfig` and
 :class:`~rl_execution.config.ExecutionConfig`.  Unknown keys are ignored.
 """
+
 from __future__ import annotations
 
 from typing import Tuple
@@ -25,5 +26,6 @@ def dump_config(market: MarketConfig, execution: ExecutionConfig, path: str) -> 
     with open(path, "w", encoding="utf-8") as f:
         yaml.safe_dump(
             {"market": market.to_dict(), "execution": execution.to_dict()},
-            f, sort_keys=False,
+            f,
+            sort_keys=False,
         )

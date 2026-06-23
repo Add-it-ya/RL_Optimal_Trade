@@ -1,4 +1,5 @@
 """A simple fixed-size uniform experience replay buffer for value-based agents."""
+
 from __future__ import annotations
 
 from typing import NamedTuple

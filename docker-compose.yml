@@ -1,0 +1,26 @@
+# Reviewer-friendly entry points. Build once, then:
+#   docker compose run --rm tests
+#   docker compose run --rm experiments
+#   docker compose up dashboard      # http://localhost:8501
+services:
+  tests:
+    build: .
+    command: pytest -q
+
+  experiments:
+    build: .
+    command: rlx-experiments --quick
+    volumes:
+      - ./results:/app/results
+      - ./reports:/app/reports
+      - ./models:/app/models
+
+  dashboard:
+    build: .
+    command: streamlit run dashboard/app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./results:/app/results
+      - ./reports:/app/reports
+      - ./models:/app/models

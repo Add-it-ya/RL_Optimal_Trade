@@ -17,6 +17,7 @@ The package is organised into loosely-coupled sub-packages:
 The core simulation layers (everything except :mod:`rl_execution.agents`) depend only on
 numpy/pandas/scipy/gymnasium so they can be used without a deep-learning backend installed.
 """
+
 import os as _os
 
 # Anaconda ships MKL's libiomp5 and PyTorch bundles its own OpenMP; on Windows both can be
@@ -25,11 +26,11 @@ import os as _os
 _os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from rl_execution.config import (
-    MarketConfig,
+    ActionType,
     ExecutionConfig,
+    MarketConfig,
     RewardConfig,
     Side,
-    ActionType,
 )
 
 __version__ = "0.1.0"

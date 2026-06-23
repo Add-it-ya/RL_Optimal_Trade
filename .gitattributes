@@ -1,0 +1,10 @@
+# Normalise line endings: keep LF in the repo, let Git handle the working-tree checkout.
+* text=auto eol=lf
+
+# Treat binary artefacts as binary (no EOL conversion, no diff noise).
+*.png binary
+*.jpg binary
+*.gif binary
+*.pt binary
+*.zip binary
+*.pkl binary

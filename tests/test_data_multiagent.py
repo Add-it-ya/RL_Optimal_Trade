@@ -1,11 +1,11 @@
 import numpy as np
 import pytest
 
+from rl_execution.backtest import run_episode
+from rl_execution.baselines import TWAP, AlmgrenChriss
 from rl_execution.config import ExecutionConfig, MarketConfig, Side
 from rl_execution.data import HistoricalMarketSource, synthetic_lob_dataframe
 from rl_execution.envs import ExecutionEnv, MultiAgentSimulator, Participant
-from rl_execution.baselines import TWAP, AlmgrenChriss
-from rl_execution.backtest import run_episode
 from rl_execution.experiments import get_regime, list_regimes, randomized_market_config
 
 

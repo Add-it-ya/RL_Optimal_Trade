@@ -9,6 +9,7 @@ Each regime is a :class:`~rl_execution.config.MarketConfig`.  Regimes are groupe
 :func:`randomized_market_config` samples a config from across these axes and is used for
 *domain-randomised* training so a single agent generalises to unseen conditions.
 """
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -22,8 +23,7 @@ from rl_execution.config import MarketConfig
 # *state-reactive* policy can add value over static schedules; drift magnitudes are kept
 # small relative to per-step volatility so that timing skill (not trivial front-loading)
 # is what differentiates strategies.
-_BASE = MarketConfig(imbalance_alpha=0.05, imbalance_strength=0.40,
-                     imbalance_persistence=0.85)
+_BASE = MarketConfig(imbalance_alpha=0.05, imbalance_strength=0.40, imbalance_persistence=0.85)
 
 REGIMES: Dict[str, MarketConfig] = {
     # --- volatility ---
@@ -31,13 +31,23 @@ REGIMES: Dict[str, MarketConfig] = {
     "medium_vol": replace(_BASE, volatility=0.02, vol_of_vol=0.2),
     "high_vol": replace(_BASE, volatility=0.05, vol_of_vol=0.5),
     # --- liquidity ---
-    "thin": replace(_BASE, base_depth=200.0, base_spread=0.05,
-                    base_market_volume=800.0, temporary_impact=3.0e-5,
-                    permanent_impact=1.2e-5),
+    "thin": replace(
+        _BASE,
+        base_depth=200.0,
+        base_spread=0.05,
+        base_market_volume=800.0,
+        temporary_impact=3.0e-5,
+        permanent_impact=1.2e-5,
+    ),
     "normal_liquidity": replace(_BASE),
-    "deep": replace(_BASE, base_depth=1500.0, base_spread=0.01,
-                    base_market_volume=6000.0, temporary_impact=4.0e-6,
-                    permanent_impact=2.0e-6),
+    "deep": replace(
+        _BASE,
+        base_depth=1500.0,
+        base_spread=0.01,
+        base_market_volume=6000.0,
+        temporary_impact=4.0e-6,
+        permanent_impact=2.0e-6,
+    ),
     # --- trend (drift small vs sqrt-horizon volatility) ---
     "bull": replace(_BASE, drift=0.0008),
     "bear": replace(_BASE, drift=-0.0008),

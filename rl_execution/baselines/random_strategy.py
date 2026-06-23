@@ -4,6 +4,7 @@ Trades a uniformly random fraction of the remaining inventory each step (the env
 force-liquidates any remainder at the horizon).  Serves as a naive lower-bound benchmark
 that any competent strategy should beat.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, Optional

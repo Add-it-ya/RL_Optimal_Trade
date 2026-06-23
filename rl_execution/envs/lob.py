@@ -6,10 +6,10 @@ incoming market order is filled by *walking* the relevant side of the ladder, wh
 produces a convex (size-dependent) execution cost — the microstructural source of
 slippage and temporary market impact.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Tuple
 
 import numpy as np
 

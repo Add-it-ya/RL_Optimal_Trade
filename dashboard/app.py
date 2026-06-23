@@ -8,6 +8,7 @@ If experiment results exist (``results/results.pkl`` from ``run_experiments.py``
 dashboard renders the saved comparison; otherwise it can run a quick *live* baseline
 comparison on a chosen regime so the dashboard is useful even before training.
 """
+
 from __future__ import annotations
 
 import sys
@@ -53,11 +54,11 @@ def render_regime_block(results_by_strat, title: str):
         st.dataframe(table.round(2), use_container_width=True)
         if "TWAP" in results_by_strat:
             st.markdown("**Paired vs TWAP** (vs_TWAP<0 = better; common random numbers)")
-            st.dataframe(paired_is_table(results_by_strat, "TWAP").round(2),
-                         use_container_width=True)
+            st.dataframe(
+                paired_is_table(results_by_strat, "TWAP").round(2), use_container_width=True
+            )
     with c2:
-        st.pyplot(viz.plot_rl_vs_baselines(table, rl) if rl
-                  else viz.plot_cost_comparison(table))
+        st.pyplot(viz.plot_rl_vs_baselines(table, rl) if rl else viz.plot_cost_comparison(table))
     c3, c4 = st.columns(2)
     with c3:
         st.pyplot(viz.plot_inventory_decay(results_by_strat))
@@ -70,13 +71,14 @@ def render_regime_block(results_by_strat, title: str):
 # ===================================================================== saved results
 if mode == "Saved experiment results":
     if not RESULTS_PKL.exists():
-        st.warning("No saved results found. Run `python scripts/run_experiments.py` "
-                   "or switch to *Live baseline backtest*.")
+        st.warning(
+            "No saved results found. Run `python scripts/run_experiments.py` "
+            "or switch to *Live baseline backtest*."
+        )
     else:
         results = load_pickle(RESULTS_PKL)
         regimes = list(results.keys())
-        regime = st.sidebar.selectbox("Regime", regimes,
-                                      index=min(1, len(regimes) - 1))
+        regime = st.sidebar.selectbox("Regime", regimes, index=min(1, len(regimes) - 1))
         if RESULTS_CSV.exists():
             df = pd.read_csv(RESULTS_CSV)
             st.markdown("### Robustness across regimes (IS, bps — lower is better)")
@@ -96,18 +98,28 @@ else:
     episodes = st.sidebar.slider("Episodes", 10, 500, 100, step=10)
     run = st.sidebar.button("Run backtest", type="primary")
 
-    st.info("Compares the classical baselines on the chosen regime. "
-            "Train RL agents with `scripts/run_experiments.py` to add them here.")
+    st.info(
+        "Compares the classical baselines on the chosen regime. "
+        "Train RL agents with `scripts/run_experiments.py` to add them here."
+    )
     if run:
-        exec_config = ExecutionConfig(total_inventory=float(inventory), horizon=int(horizon),
-                                      side=Side(side), action_type=ActionType.CONTINUOUS)
+        exec_config = ExecutionConfig(
+            total_inventory=float(inventory),
+            horizon=int(horizon),
+            side=Side(side),
+            action_type=ActionType.CONTINUOUS,
+        )
         market_config = get_regime(regime)
 
         def factory():
             return ExecutionEnv(market_config, exec_config)
 
         with st.spinner(f"Running {episodes} episodes × {len(build_baselines())} strategies ..."):
-            results = compare_strategies(factory, build_baselines(),
-                                         n_episodes=int(episodes), base_seed=10_000,
-                                         progress=False)
+            results = compare_strategies(
+                factory,
+                build_baselines(),
+                n_episodes=int(episodes),
+                base_seed=10_000,
+                progress=False,
+            )
         render_regime_block(results, f"Live results — regime `{regime}` ({side})")

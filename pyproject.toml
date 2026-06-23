@@ -24,7 +24,20 @@ dependencies = [
 [project.optional-dependencies]
 rl = ["torch>=2.0", "stable-baselines3>=2.2.1", "tensorboard>=2.13"]
 dashboard = ["streamlit>=1.30"]
-dev = ["pytest>=7.0"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.6",
+    "black>=24.0",
+    "mypy>=1.8",
+    "pre-commit>=3.5",
+]
+
+[project.scripts]
+rlx-train = "rl_execution.cli.train:main"
+rlx-evaluate = "rl_execution.cli.evaluate:main"
+rlx-experiments = "rl_execution.cli.experiments:main"
+rlx-report = "rl_execution.cli.report:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -33,3 +46,60 @@ include = ["rl_execution*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]  # line length is owned by the formatter (black)
+
+[tool.ruff.lint.per-file-ignores]
+# The package sets KMP_DUPLICATE_LIB_OK before importing submodules, so imports are
+# intentionally not all at the top of the file.
+"rl_execution/__init__.py" = ["E402"]
+# Streamlit apps configure the page and warnings before importing heavy modules.
+"dashboard/app.py" = ["E402"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]
+
+[tool.mypy]
+python_version = "3.9"
+ignore_missing_imports = true       # torch / sb3 / gymnasium / streamlit ship partial stubs
+disallow_untyped_defs = false       # start lenient; tighten module-by-module in later steps
+check_untyped_defs = false
+warn_unused_ignores = false
+exclude = ["dashboard/", "tests/"]
+
+# Don't descend into heavy third-party sources (torch uses 3.10+ syntax that trips a 3.9
+# target, and most ship no/partial stubs); treat them as untyped at our boundary instead.
+[[tool.mypy.overrides]]
+module = [
+    "torch.*",
+    "stable_baselines3.*",
+    "gymnasium.*",
+    "pandas.*",
+    "scipy.*",
+    "matplotlib.*",
+    "seaborn.*",
+    "tqdm.*",
+    "yaml",
+]
+follow_imports = "skip"
+ignore_missing_imports = true
+
+# Plotting/visualisation is deferred from strict typing (least valuable to annotate and
+# heavily matplotlib-driven); tightened opportunistically in a later step.
+[[tool.mypy.overrides]]
+module = ["rl_execution.viz.*"]
+ignore_errors = true
+
+[tool.coverage.run]
+source = ["rl_execution"]
+omit = ["*/viz/*", "*/__init__.py", "*/cli/*"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "raise NotImplementedError", "if __name__ == .__main__.:"]

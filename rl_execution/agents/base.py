@@ -10,6 +10,7 @@ Every agent (custom or Stable-Baselines3-backed) exposes::
 :class:`~rl_execution.baselines.base.BaseStrategy` interface and can be dropped into the
 backtest engine alongside the classical baselines.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict
@@ -61,11 +62,13 @@ class AgentStrategy(BaseStrategy):
     def __init__(self, agent: BaseAgent, name: str | None = None, deterministic: bool = True):
         self.agent = agent
         self.deterministic = deterministic
-        self.name = name or getattr(agent, "name", agent.__class__.__name__)
+        self.name = str(name or getattr(agent, "name", agent.__class__.__name__))
 
     def reset(self, env) -> None:
         super().reset(env)
 
     def act(self, obs: np.ndarray, info: Dict[str, Any]):
         # the agent already emits actions in the env's action space
-        return self.agent.predict(np.asarray(obs, dtype=np.float32), deterministic=self.deterministic)
+        return self.agent.predict(
+            np.asarray(obs, dtype=np.float32), deterministic=self.deterministic
+        )

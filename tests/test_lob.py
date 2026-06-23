@@ -9,8 +9,8 @@ def test_book_is_sorted_and_two_sided():
     rng = np.random.default_rng(0)
     snap = build_book(100.0, 0.02, MarketConfig(), 0.0, rng)
     assert snap.best_ask > snap.best_bid
-    assert np.all(np.diff(snap.bid_prices) < 0)   # bids decrease away from touch
-    assert np.all(np.diff(snap.ask_prices) > 0)   # asks increase away from touch
+    assert np.all(np.diff(snap.bid_prices) < 0)  # bids decrease away from touch
+    assert np.all(np.diff(snap.ask_prices) > 0)  # asks increase away from touch
     assert snap.spread > 0
 
 
@@ -29,8 +29,8 @@ def test_large_order_sweeps_past_depth():
     snap = build_book(100.0, 0.02, cfg, 0.0, rng)
     huge = snap.bid_sizes.sum() * 5
     fill = walk_book(snap, Side.SELL, huge)
-    assert fill.filled_shares == huge                 # everything fills
-    assert fill.worst_price < snap.bid_prices[-1]     # swept beyond displayed depth
+    assert fill.filled_shares == huge  # everything fills
+    assert fill.worst_price < snap.bid_prices[-1]  # swept beyond displayed depth
 
 
 def test_imbalance_skews_depth():
@@ -44,5 +44,5 @@ def test_permanent_impact_moves_mid_adversely():
     sim.reset(horizon=10)
     mid0 = sim.mid
     res = sim.execute(Side.SELL, 1000.0)
-    assert res.mid_after < mid0                        # selling pushes the mid down
+    assert res.mid_after < mid0  # selling pushes the mid down
     assert res.perm_impact < 0

@@ -15,6 +15,7 @@ fill, net of transaction costs and an explicit temporary-impact penalty, minus a
 inventory-risk term.  Summed over an episode it approximates
 ``-(implementation_shortfall + risk)`` expressed in basis points.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -60,6 +61,8 @@ class ExecutionEnv(gym.Env):
         self.total_inventory = float(self.exec_config.total_inventory)
 
         # ---- action space ----
+        self.n_actions: Optional[int]
+        self._action_grid: Optional[np.ndarray]
         if self.exec_config.action_type is ActionType.DISCRETE:
             self.n_actions = int(self.exec_config.n_discrete_actions)
             self.action_space = spaces.Discrete(self.n_actions)
@@ -82,6 +85,7 @@ class ExecutionEnv(gym.Env):
     def _action_to_fraction(self, action) -> float:
         """Map a raw env action to a fraction of remaining inventory in [0, 1]."""
         if self.exec_config.action_type is ActionType.DISCRETE:
+            assert self.n_actions is not None and self._action_grid is not None
             idx = int(np.asarray(action).reshape(-1)[0])
             idx = int(np.clip(idx, 0, self.n_actions - 1))
             return float(self._action_grid[idx])
@@ -89,6 +93,7 @@ class ExecutionEnv(gym.Env):
         return float(np.clip(val, 0.0, 1.0))
 
     def _build_obs(self) -> np.ndarray:
+        assert self.market is not None
         m = self.market
         snap = m.snapshot
         inv_frac = self.remaining / self.total_inventory if self.total_inventory > 0 else 0.0
@@ -117,6 +122,7 @@ class ExecutionEnv(gym.Env):
             self.market = self.market_source.make_simulator(rng)
         else:
             self.market = MarketSimulator(self.market_config, rng=rng)
+        assert self.market is not None
         self.market.reset(horizon=self.horizon)
 
         self.t = 0
@@ -158,8 +164,7 @@ class ExecutionEnv(gym.Env):
         # implementation-shortfall contribution of this fill vs the arrival price
         shortfall_cash = self.side.sign * filled * (self.arrival_price - exec_result.avg_price)
         commission = (
-            cfg.commission_per_share * filled
-            + (cfg.commission_bps / 1e4) * exec_result.notional
+            cfg.commission_per_share * filled + (cfg.commission_bps / 1e4) * exec_result.notional
         )
 
         self.remaining = max(self.remaining - filled, 0.0)
@@ -225,6 +230,7 @@ class ExecutionEnv(gym.Env):
     # ------------------------------------------------------------------ summaries
     def _episode_summary(self, unexecuted: float) -> Dict[str, Any]:
         """Aggregate execution-quality statistics for the finished episode."""
+        assert self.market is not None
         avg_fill = (
             self.executed_notional / self.executed_shares
             if self.executed_shares > 0

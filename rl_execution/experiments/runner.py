@@ -4,6 +4,7 @@ A strategy may require a particular action space (discrete value-based agents vs
 policy agents).  Because every regime is replayed with paired seeds, strategies on
 different action spaces still face identical price paths and are directly comparable.
 """
+
 from __future__ import annotations
 
 from dataclasses import replace
@@ -12,10 +13,10 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from rl_execution.backtest import BacktestResult, evaluate
+from rl_execution.baselines import POV, TWAP, VWAP, AlmgrenChriss, RandomStrategy
 from rl_execution.config import ActionType, ExecutionConfig
 from rl_execution.envs import ExecutionEnv
-from rl_execution.backtest import BacktestResult, evaluate
-from rl_execution.baselines import AlmgrenChriss, POV, RandomStrategy, TWAP, VWAP
 from rl_execution.experiments.regimes import (
     get_regime,
     list_regimes,
@@ -30,8 +31,7 @@ class DomainRandomizedEnv(ExecutionEnv):
     across volatility / liquidity / trend conditions rather than overfit to one.
     """
 
-    def __init__(self, exec_config: Optional[ExecutionConfig] = None,
-                 seed: Optional[int] = None):
+    def __init__(self, exec_config: Optional[ExecutionConfig] = None, seed: Optional[int] = None):
         self._dr_rng = np.random.default_rng(seed)
         super().__init__(randomized_market_config(self._dr_rng), exec_config)
 
@@ -83,15 +83,17 @@ def evaluate_across_regimes(
                 return ExecutionEnv(mc, ec)
 
             results[regime][name] = evaluate(
-                factory, strat, n_episodes=n_episodes,
-                base_seed=base_seed, name=name, progress=progress,
+                factory,
+                strat,
+                n_episodes=n_episodes,
+                base_seed=base_seed,
+                name=name,
+                progress=progress,
             )
     return results
 
 
-def regime_results_frame(
-    results: Dict[str, Dict[str, BacktestResult]]
-) -> pd.DataFrame:
+def regime_results_frame(results: Dict[str, Dict[str, BacktestResult]]) -> pd.DataFrame:
     """Flatten nested regime results into a tidy DataFrame."""
     rows = []
     for regime, by_strat in results.items():

@@ -4,10 +4,11 @@ Every function returns a ``matplotlib.figure.Figure`` (and optionally saves it),
 same code serves both the offline report and the Streamlit dashboard.  A non-interactive
 Agg backend is used so plots render in headless / script contexts.
 """
+
 from __future__ import annotations
 
 import os
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, Optional
 
 import matplotlib
 
@@ -147,25 +148,32 @@ def plot_cost_comparison(table: pd.DataFrame, save: Optional[str] = None):
     return fig
 
 
-def plot_rl_vs_baselines(
-    table: pd.DataFrame, rl_names: Iterable[str], save: Optional[str] = None
-):
+def plot_rl_vs_baselines(table: pd.DataFrame, rl_names: Iterable[str], save: Optional[str] = None):
     """Bar chart of mean IS with RL agents highlighted vs baselines."""
     set_style()
     table = table.sort_values("IS_bps")
     rl = set(rl_names)
     colors = ["#d1495b" if name in rl else "#5b8c85" for name in table.index]
     fig, ax = plt.subplots(figsize=(9, 5))
-    bars = ax.bar(table.index, table["IS_bps"].to_numpy(), color=colors)
+    ax.bar(table.index, table["IS_bps"].to_numpy(), color=colors)
     ax.set_ylabel("Implementation shortfall (bps)")
     ax.set_title("RL agents vs baselines (lower is better)")
     ax.axhline(0, color="k", lw=0.6)
     plt.xticks(rotation=30, ha="right")
     if "IS_std" in table.columns:
-        ax.errorbar(table.index, table["IS_bps"], yerr=table["IS_std"],
-                    fmt="none", ecolor="gray", alpha=0.5, capsize=3)
-    handles = [plt.Rectangle((0, 0), 1, 1, color="#d1495b"),
-               plt.Rectangle((0, 0), 1, 1, color="#5b8c85")]
+        ax.errorbar(
+            table.index,
+            table["IS_bps"],
+            yerr=table["IS_std"],
+            fmt="none",
+            ecolor="gray",
+            alpha=0.5,
+            capsize=3,
+        )
+    handles = [
+        plt.Rectangle((0, 0), 1, 1, color="#d1495b"),
+        plt.Rectangle((0, 0), 1, 1, color="#5b8c85"),
+    ]
     ax.legend(handles, ["RL agent", "Baseline"], fontsize=8)
     if save:
         save_fig(fig, save)
@@ -202,8 +210,14 @@ def plot_price_path(result, episode: int = 0, save: Optional[str] = None):
         if sched is not None:
             steps = np.arange(1, len(sched) + 1)
             sizes = 20 + 180 * sched / (sched.max() + 1e-9)
-            ax.scatter(steps, path[1 : len(sched) + 1], s=sizes, color="#d1495b",
-                       alpha=0.7, label="Fills (size ∝ shares)")
+            ax.scatter(
+                steps,
+                path[1 : len(sched) + 1],
+                s=sizes,
+                color="#d1495b",
+                alpha=0.7,
+                label="Fills (size ∝ shares)",
+            )
     ax.set_xlabel("Step")
     ax.set_ylabel("Price")
     ax.set_title(f"Sample execution path ({result.name})")
@@ -213,20 +227,27 @@ def plot_price_path(result, episode: int = 0, save: Optional[str] = None):
     return fig
 
 
-def plot_regime_heatmap(
-    regime_df: pd.DataFrame, value: str = "IS_bps", save: Optional[str] = None
-):
+def plot_regime_heatmap(regime_df: pd.DataFrame, value: str = "IS_bps", save: Optional[str] = None):
     """Heatmap of a metric across (strategy x regime)."""
     set_style()
     pivot = regime_df.pivot(index="strategy", columns="regime", values=value)
     fig, ax = plt.subplots(figsize=(1.2 * pivot.shape[1] + 3, 0.6 * pivot.shape[0] + 2))
     if _HAS_SNS:
-        sns.heatmap(pivot, annot=True, fmt=".1f", cmap="RdYlGn_r", center=0, ax=ax,
-                    cbar_kws={"label": value})
+        sns.heatmap(
+            pivot,
+            annot=True,
+            fmt=".1f",
+            cmap="RdYlGn_r",
+            center=0,
+            ax=ax,
+            cbar_kws={"label": value},
+        )
     else:  # pragma: no cover
         im = ax.imshow(pivot.to_numpy(), cmap="RdYlGn_r", aspect="auto")
-        ax.set_xticks(range(pivot.shape[1])); ax.set_xticklabels(pivot.columns, rotation=45)
-        ax.set_yticks(range(pivot.shape[0])); ax.set_yticklabels(pivot.index)
+        ax.set_xticks(range(pivot.shape[1]))
+        ax.set_xticklabels(pivot.columns, rotation=45)
+        ax.set_yticks(range(pivot.shape[0]))
+        ax.set_yticklabels(pivot.index)
         fig.colorbar(im, ax=ax, label=value)
     ax.set_title(f"{value} by strategy and regime (lower = better)")
     if save:

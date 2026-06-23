@@ -12,6 +12,7 @@ runnable without proprietary data.  :class:`HistoricalMarketSource` plugs into
 random windows of the data, overlaying the configured market-impact model on top of the
 historical prices.
 """
+
 from __future__ import annotations
 
 from typing import List, Optional
@@ -123,8 +124,9 @@ class HistoricalMarketSource:
     Pass an instance as ``market_source`` to :class:`~rl_execution.envs.ExecutionEnv`.
     """
 
-    def __init__(self, df: pd.DataFrame, config: Optional[MarketConfig] = None,
-                 vol_window: int = 10):
+    def __init__(
+        self, df: pd.DataFrame, config: Optional[MarketConfig] = None, vol_window: int = 10
+    ):
         self.config = config or MarketConfig()
         self.vol_window = vol_window
         self.levels = sum(c.startswith("bid_px_") for c in df.columns)
@@ -154,8 +156,9 @@ class HistoricalMarketSimulator:
     temporary impact is a per-trade concession.
     """
 
-    def __init__(self, source: HistoricalMarketSource, rng: np.random.Generator,
-                 vol_window: int = 10):
+    def __init__(
+        self, source: HistoricalMarketSource, rng: np.random.Generator, vol_window: int = 10
+    ):
         self.source = source
         self.config = source.config
         self.rng = rng
@@ -206,8 +209,9 @@ class HistoricalMarketSimulator:
         fill = walk_book(self.snapshot, side, shares)
         filled = fill.filled_shares
         if filled <= 0:
-            return ExecutionResult(0.0, mid_before, mid_before, 0.0, mid_before,
-                                   mid_before, 0.0, 0.0, 0.0)
+            return ExecutionResult(
+                0.0, mid_before, mid_before, 0.0, mid_before, mid_before, 0.0, 0.0, 0.0
+            )
 
         temp_per_share = cfg.temporary_impact * filled
         eff_price = fill.avg_price - side.sign * temp_per_share
@@ -220,9 +224,14 @@ class HistoricalMarketSimulator:
 
         slippage = side.sign * (mid_before - eff_price) / mid_before
         return ExecutionResult(
-            filled_shares=filled, avg_price=eff_price, raw_avg_price=fill.avg_price,
-            notional=eff_price * filled, mid_before=mid_before, mid_after=mid_after,
-            slippage=slippage, temp_impact_cost=temp_impact_cost,
+            filled_shares=filled,
+            avg_price=eff_price,
+            raw_avg_price=fill.avg_price,
+            notional=eff_price * filled,
+            mid_before=mid_before,
+            mid_after=mid_after,
+            slippage=slippage,
+            temp_impact_cost=temp_impact_cost,
             perm_impact=mid_after - mid_before,  # signed mid shift (adverse direction)
         )
 

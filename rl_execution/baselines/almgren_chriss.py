@@ -14,6 +14,7 @@ transactions*).  The optimal holdings trajectory is
 As risk aversion :math:`\\lambda \\to 0` the schedule collapses to TWAP; larger
 :math:`\\lambda` front-loads trading to reduce exposure to price risk.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict
@@ -47,8 +48,8 @@ class AlmgrenChriss(BaseStrategy):
         if lam <= 0 or eta_tilde <= 0:
             return np.full(N, X / N)
 
-        kappa_tilde_sq = lam * sigma ** 2 / eta_tilde
-        arg = 0.5 * tau ** 2 * kappa_tilde_sq + 1.0
+        kappa_tilde_sq = lam * sigma**2 / eta_tilde
+        arg = 0.5 * tau**2 * kappa_tilde_sq + 1.0
         kappa = np.arccosh(arg) / tau
         if not np.isfinite(kappa) or kappa < 1e-8:
             return np.full(N, X / N)

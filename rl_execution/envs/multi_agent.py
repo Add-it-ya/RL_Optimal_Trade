@@ -10,6 +10,7 @@ Participants may be classical baselines or trained RL agents (anything exposing 
 simulator (not a PettingZoo env); it is intended for studying interaction effects rather
 than for training.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -44,8 +45,13 @@ class Participant:
 class _AgentView:
     """Minimal env-like view passed to baseline strategies bound to a participant."""
 
-    def __init__(self, participant: Participant, market: MarketSimulator,
-                 horizon: int, market_config: MarketConfig):
+    def __init__(
+        self,
+        participant: Participant,
+        market: MarketSimulator,
+        horizon: int,
+        market_config: MarketConfig,
+    ):
         self.participant = participant
         self.market = market
         self.horizon = horizon
@@ -81,26 +87,36 @@ class MultiAgentSimulator:
         rel_spread = snap.spread / market.mid if market.mid > 0 else 0.0
         depth_norm = max(self.market_config.base_depth * 5.0, 1.0)
         prev_action = p.history[-1]["action_fraction"] if p.history else 0.0
-        obs = np.array([
-            inv_frac, time_frac, price_ret, rel_spread,
-            market.recent_volatility(), snap.imbalance,
-            snap.depth(5) / depth_norm, prev_action,
-        ], dtype=np.float32)
+        obs = np.array(
+            [
+                inv_frac,
+                time_frac,
+                price_ret,
+                rel_spread,
+                market.recent_volatility(),
+                snap.imbalance,
+                snap.depth(5) / depth_norm,
+                prev_action,
+            ],
+            dtype=np.float32,
+        )
         return np.clip(obs, [0, 0, -1, 0, 0, -1, 0, 0], [1, 1, 1, 1, 1, 1, 100, 1])
 
-    def _fraction(self, p: Participant, view: _AgentView, obs: np.ndarray, last_step: bool) -> float:
+    def _fraction(
+        self, p: Participant, view: _AgentView, obs: np.ndarray, last_step: bool
+    ) -> float:
         strat = p.strategy
         if last_step:
             return 1.0
-        if hasattr(strat, "_decide_fraction"):           # classical baseline
+        if hasattr(strat, "_decide_fraction"):  # classical baseline
             return float(np.clip(strat._decide_fraction(obs, {}), 0.0, 1.0))
-        if hasattr(strat, "agent"):                        # AgentStrategy wrapper
+        if hasattr(strat, "agent"):  # AgentStrategy wrapper
             action = strat.agent.predict(obs, deterministic=True)
             if p.action_type is ActionType.DISCRETE:
                 grid = np.linspace(0.0, 1.0, p.n_discrete_actions)
                 return float(grid[int(np.asarray(action).reshape(-1)[0])])
             return float(np.clip(np.asarray(action, dtype=float).reshape(-1)[0], 0.0, 1.0))
-        if callable(strat):                                # bare fraction function
+        if callable(strat):  # bare fraction function
             return float(np.clip(strat(obs), 0.0, 1.0))
         raise TypeError(f"Unsupported strategy type for participant {p.name}")
 
@@ -139,11 +155,16 @@ class MultiAgentSimulator:
                 p.remaining = max(p.remaining - res.filled_shares, 0.0)
                 p.executed_shares += res.filled_shares
                 p.executed_notional += res.notional
-                p.history.append({
-                    "t": t, "action_fraction": frac, "shares": res.filled_shares,
-                    "exec_price": res.avg_price, "mid": market.mid,
-                    "inventory_after": p.remaining,
-                })
+                p.history.append(
+                    {
+                        "t": t,
+                        "action_fraction": frac,
+                        "shares": res.filled_shares,
+                        "exec_price": res.avg_price,
+                        "mid": market.mid,
+                        "inventory_after": p.remaining,
+                    }
+                )
             market.advance()
 
         return self._summaries(arrival)
@@ -152,14 +173,17 @@ class MultiAgentSimulator:
         rows = []
         per_agent = {}
         for p in self.participants:
-            avg_fill = (p.executed_notional / p.executed_shares
-                        if p.executed_shares > 0 else arrival)
+            avg_fill = p.executed_notional / p.executed_shares if p.executed_shares > 0 else arrival
             is_bps = p.side.sign * (arrival - avg_fill) / arrival * 1e4
-            rows.append({
-                "agent": p.name, "side": p.side.value,
-                "executed_shares": p.executed_shares,
-                "avg_fill_price": avg_fill, "arrival_price": arrival,
-                "implementation_shortfall_bps": is_bps,
-            })
+            rows.append(
+                {
+                    "agent": p.name,
+                    "side": p.side.value,
+                    "executed_shares": p.executed_shares,
+                    "avg_fill_price": avg_fill,
+                    "arrival_price": arrival,
+                    "implementation_shortfall_bps": is_bps,
+                }
+            )
             per_agent[p.name] = pd.DataFrame(p.history)
         return {"table": pd.DataFrame(rows), "histories": per_agent, "arrival_price": arrival}

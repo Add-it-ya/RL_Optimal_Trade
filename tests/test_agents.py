@@ -1,11 +1,12 @@
 """Light-weight agent tests (tiny budgets so the suite stays fast)."""
+
 import numpy as np
 import pytest
 
 from rl_execution.agents import AgentStrategy, make_agent, required_action_type
-from rl_execution.config import ActionType, ExecutionConfig, MarketConfig
-from rl_execution.envs import ExecutionEnv
 from rl_execution.backtest import run_episode
+from rl_execution.config import ExecutionConfig, MarketConfig
+from rl_execution.envs import ExecutionEnv
 
 
 def _env(name):
@@ -20,8 +21,11 @@ def test_agent_builds_trains_predicts(name):
     agent.train(400)
     obs, _ = env.reset(seed=0)
     action = agent.predict(obs, deterministic=True)
-    assert env.action_space.contains(np.asarray(action).reshape(env.action_space.shape)
-                                     if env.action_space.shape else int(action))
+    assert env.action_space.contains(
+        np.asarray(action).reshape(env.action_space.shape)
+        if env.action_space.shape
+        else int(action)
+    )
 
 
 @pytest.mark.parametrize("name", ["dqn", "doubledqn"])

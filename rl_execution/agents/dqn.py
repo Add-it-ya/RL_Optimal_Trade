@@ -7,6 +7,7 @@ maximisation bias of Q-learning.
 
 Only a discrete action space is supported (one Q-value per discrete inventory fraction).
 """
+
 from __future__ import annotations
 
 from typing import Optional
@@ -19,6 +20,7 @@ from rl_execution.agents.replay_buffer import ReplayBuffer
 
 def _torch():
     import torch  # local import so the simulation layers don't require torch
+
     return torch
 
 
@@ -26,7 +28,6 @@ class QNetwork:
     """Lazily-built MLP Q-network wrapper (keeps torch import local)."""
 
     def __init__(self, obs_dim: int, n_actions: int, hidden=(64, 64)):
-        torch = _torch()
         import torch.nn as nn
 
         layers = []
@@ -114,7 +115,6 @@ class DQNAgent(BaseAgent):
 
     # ------------------------------------------------------------------ training
     def train(self, total_timesteps: int, progress: bool = False, **kwargs) -> "DQNAgent":
-        torch = _torch()
         env = self.env
         obs, _ = env.reset()
         ep_reward = 0.0
@@ -123,6 +123,7 @@ class DQNAgent(BaseAgent):
         if progress:
             try:
                 from tqdm import tqdm
+
                 iterator = tqdm(iterator, desc=self.name, leave=False)
             except ImportError:
                 pass

@@ -4,6 +4,7 @@ Trades an equal number of shares (``total_inventory / horizon``) in every window
 independent of price or volume.  The canonical, impact-minimising-under-no-information
 benchmark.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict

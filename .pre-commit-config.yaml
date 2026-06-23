@@ -1,0 +1,34 @@
+# Run `pre-commit install` once; hooks then run on every commit.
+# See https://pre-commit.com for details.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.18
+    hooks:
+      - id: ruff
+        args: [--fix]
+
+  - repo: https://github.com/psf/black
+    rev: 24.8.0
+    hooks:
+      - id: black
+
+  # mypy uses the local environment so it sees the installed dependencies.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: mypy rl_execution
+        language: system
+        types: [python]
+        pass_filenames: false

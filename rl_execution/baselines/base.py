@@ -10,6 +10,7 @@ Baselines decide a *fraction of remaining inventory* to trade and convert it to 
 action space; they may read the (already public) state of the bound environment, which is
 appropriate for scheduling rules such as TWAP / VWAP / POV / Almgren-Chriss.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict

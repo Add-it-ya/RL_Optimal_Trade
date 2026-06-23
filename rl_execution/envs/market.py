@@ -8,6 +8,7 @@ step.  It exposes two operations to the environment:
 * :meth:`advance` -- evolve the market one step (drift / volatility / mean reversion /
   imbalance), refreshing the book and the ambient traded volume.
 """
+
 from __future__ import annotations
 
 from collections import deque
@@ -24,14 +25,14 @@ class ExecutionResult:
     """Outcome of executing a market order, with cost decomposition."""
 
     filled_shares: float
-    avg_price: float            # effective price actually paid/received (incl. temp impact)
-    raw_avg_price: float        # price from walking the book only (excl. temp impact)
-    notional: float             # effective cash exchanged (avg_price * filled_shares)
-    mid_before: float           # mid at execution time (pre permanent impact)
-    mid_after: float            # mid after permanent impact has been applied
-    slippage: float             # signed cost vs mid_before, as a fraction (+ = adverse)
-    temp_impact_cost: float     # cash cost of transient impact
-    perm_impact: float          # signed mid shift caused by this order (price units)
+    avg_price: float  # effective price actually paid/received (incl. temp impact)
+    raw_avg_price: float  # price from walking the book only (excl. temp impact)
+    notional: float  # effective cash exchanged (avg_price * filled_shares)
+    mid_before: float  # mid at execution time (pre permanent impact)
+    mid_after: float  # mid after permanent impact has been applied
+    slippage: float  # signed cost vs mid_before, as a fraction (+ = adverse)
+    temp_impact_cost: float  # cash cost of transient impact
+    perm_impact: float  # signed mid shift caused by this order (price units)
 
 
 class MarketSimulator:
@@ -157,9 +158,7 @@ class MarketSimulator:
 
         # stochastic volatility (log-AR(0) shock around the base level)
         if cfg.vol_of_vol > 0:
-            self.sigma = float(
-                cfg.volatility * np.exp(self.rng.normal(0.0, cfg.vol_of_vol))
-            )
+            self.sigma = float(cfg.volatility * np.exp(self.rng.normal(0.0, cfg.vol_of_vol)))
         else:
             self.sigma = float(cfg.volatility)
 
@@ -185,8 +184,7 @@ class MarketSimulator:
 
         # evolve the spread around its base level (log-noise)
         self.spread = float(
-            max(cfg.base_spread * np.exp(self.rng.normal(0.0, cfg.spread_vol)),
-                cfg.tick_size)
+            max(cfg.base_spread * np.exp(self.rng.normal(0.0, cfg.spread_vol)), cfg.tick_size)
         )
 
         self.market_volume = self._sample_volume()

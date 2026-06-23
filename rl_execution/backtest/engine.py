@@ -5,6 +5,7 @@ Any object implementing the ``reset(env)`` / ``act(obs, info) -> action`` interf
 many randomised episodes.  Results bundle per-episode metrics, inventory trajectories,
 execution schedules and aggregate statistics for downstream reporting / plotting.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -75,7 +76,6 @@ def run_episode(env, strategy, seed: Optional[int] = None):
     """
     obs, info = env.reset(seed=seed)
     strategy.reset(env)
-    arrival = env.arrival_price
     rewards: List[float] = []
     price_path: List[float] = [env.market.mid]
 
@@ -147,8 +147,12 @@ def compare_strategies(
     results: Dict[str, BacktestResult] = {}
     for name, strat in strategies.items():
         results[name] = evaluate(
-            env_factory, strat, n_episodes=n_episodes,
-            base_seed=base_seed, name=name, progress=progress,
+            env_factory,
+            strat,
+            n_episodes=n_episodes,
+            base_seed=base_seed,
+            name=name,
+            progress=progress,
         )
     return results
 
@@ -160,9 +164,7 @@ def results_table(results: Dict[str, BacktestResult]) -> pd.DataFrame:
     return df.sort_values("IS_bps")
 
 
-def paired_is_table(
-    results: Dict[str, BacktestResult], benchmark: str = "TWAP"
-) -> pd.DataFrame:
+def paired_is_table(results: Dict[str, BacktestResult], benchmark: str = "TWAP") -> pd.DataFrame:
     """Paired comparison of implementation shortfall against a benchmark strategy.
 
     Because every strategy is evaluated on the *same* sequence of seeds (common random
@@ -174,6 +176,7 @@ def paired_is_table(
     * ``win_rate_%``    -- fraction of episodes with lower IS than the benchmark.
     * ``t_stat``        -- paired t-statistic of the improvement (negative & large = robust).
     """
+
     def is_array(res: BacktestResult) -> np.ndarray:
         return np.array([m["implementation_shortfall_bps"] for m in res.episode_metrics])
 
@@ -187,11 +190,19 @@ def paired_is_table(
         n = min(len(arr), len(bench))
         diff = arr[:n] - bench[:n]
         sd = diff.std(ddof=1) if n > 1 else 0.0
-        rows.append({
-            "strategy": name,
-            "IS_bps": float(arr.mean()),
-            f"vs_{benchmark}": float(diff.mean()),
-            "win_rate_%": float(100.0 * np.mean(diff < 0)) if name != benchmark else float("nan"),
-            "t_stat": float(diff.mean() / (sd / np.sqrt(n) + 1e-12)) if name != benchmark else float("nan"),
-        })
+        rows.append(
+            {
+                "strategy": name,
+                "IS_bps": float(arr.mean()),
+                f"vs_{benchmark}": float(diff.mean()),
+                "win_rate_%": (
+                    float(100.0 * np.mean(diff < 0)) if name != benchmark else float("nan")
+                ),
+                "t_stat": (
+                    float(diff.mean() / (sd / np.sqrt(n) + 1e-12))
+                    if name != benchmark
+                    else float("nan")
+                ),
+            }
+        )
     return pd.DataFrame(rows).set_index("strategy").sort_values("IS_bps")

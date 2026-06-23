@@ -4,13 +4,13 @@ Builds an action-space-compatible environment for a given algorithm (optionally 
 regime or the domain-randomised distribution), trains the agent while logging per-episode
 returns, and saves the model plus a JSON sidecar describing how to rebuild it.
 """
+
 from __future__ import annotations
 
 from dataclasses import replace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import gymnasium as gym
-import numpy as np
 
 from rl_execution.agents import make_agent, required_action_type
 from rl_execution.config import ExecutionConfig
@@ -72,6 +72,7 @@ def make_env_factory(
     randomized: bool = False,
 ) -> Callable[[], ExecutionEnv]:
     """Return a zero-arg factory for evaluation envs matching ``agent_name``."""
+
     def factory():
         return make_env(agent_name, exec_config, regime=regime, randomized=randomized)
 

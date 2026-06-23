@@ -5,6 +5,7 @@ volume profile, so that more is traded when the market is expected to be liquid.
 forecast is the (deterministic) U-shaped profile used by the market simulator; with real
 data it would be an estimated historical profile.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict

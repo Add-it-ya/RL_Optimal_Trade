@@ -25,7 +25,9 @@ def test_force_liquidation_executes_everything():
     obs, _ = env.reset(seed=1)
     done = False
     while not done:
-        obs, r, term, trunc, info = env.step(np.array([0.0], dtype=np.float32))  # never trade voluntarily
+        obs, r, term, trunc, info = env.step(
+            np.array([0.0], dtype=np.float32)
+        )  # never trade voluntarily
         done = term or trunc
     summ = info["episode_summary"]
     assert summ["unexecuted_shares"] == pytest.approx(0.0, abs=1e-6)
