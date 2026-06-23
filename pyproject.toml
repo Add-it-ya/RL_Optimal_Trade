@@ -27,9 +27,11 @@ dashboard = ["streamlit>=1.30"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
-    "ruff>=0.6",
-    "black>=24.0",
-    "mypy>=1.8",
+    # Pin the style/type tools exactly so CI reproduces local results (their output
+    # changes between releases). Bump deliberately, alongside a reformat if needed.
+    "ruff==0.15.18",
+    "black==24.8.0",
+    "mypy==1.11.2",
     "pre-commit>=3.5",
 ]
 
