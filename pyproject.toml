@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rl-optimal-execution"
+version = "0.1.0"
+description = "A production-quality Reinforcement Learning framework for Optimal Trade Execution."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "RL Execution Team" }]
+dependencies = [
+    "numpy>=1.24,<2.0",
+    "pandas>=2.0",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+    "seaborn>=0.12",
+    "pyyaml>=6.0",
+    "tqdm>=4.65",
+    "gymnasium>=0.29",
+]
+
+[project.optional-dependencies]
+rl = ["torch>=2.0", "stable-baselines3>=2.2.1", "tensorboard>=2.13"]
+dashboard = ["streamlit>=1.30"]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rl_execution*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
