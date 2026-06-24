@@ -211,11 +211,15 @@ def main():
         viz.plot_training_curve(reward_logs, save=str(FIGURES_DIR / "training_curves.png"))
     print("Saved figures -> reports/figures/")
 
-    # ---- paired comparison table (saved for the report) ------------------------
-    from rl_execution.backtest import paired_is_table
+    # ---- paired comparison + multiple-testing-corrected significance (for the report) ----
+    from rl_execution.backtest import corrected_significance, paired_is_table
 
     paired = paired_is_table(rep_res, benchmark="TWAP")
     paired.to_csv(RESULTS_DIR / "paired_vs_twap.csv")
+    # Holm-correct the paired tests across the full regime x strategy grid so the report does
+    # not cherry-pick a significant regime out of many. Cheap: just t-tests on existing results.
+    corrected = corrected_significance(results, benchmark="TWAP", method="holm")
+    corrected.to_csv(RESULTS_DIR / "corrected_significance.csv", index=False)
 
     # ---- headline summary -------------------------------------------------------
     _print_headline(df, rl_names, rep, results=results)
@@ -223,7 +227,12 @@ def main():
     save_json(summary, RESULTS_DIR / "summary.json")
 
     # ---- log results to the tracker --------------------------------------------
-    for artifact in (RESULTS_DIR / "regime_results.csv", RESULTS_DIR / "summary.json"):
+    for artifact in (
+        RESULTS_DIR / "regime_results.csv",
+        RESULTS_DIR / "summary.json",
+        RESULTS_DIR / "paired_vs_twap.csv",
+        RESULTS_DIR / "corrected_significance.csv",
+    ):
         tracker.log_artifact(str(artifact))
     for fig in sorted(FIGURES_DIR.glob("*.png")):
         tracker.log_artifact(str(fig))

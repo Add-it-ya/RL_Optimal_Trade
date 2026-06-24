@@ -164,45 +164,127 @@ def results_table(results: Dict[str, BacktestResult]) -> pd.DataFrame:
     return df.sort_values("IS_bps")
 
 
-def paired_is_table(results: Dict[str, BacktestResult], benchmark: str = "TWAP") -> pd.DataFrame:
+def episode_is(res: BacktestResult) -> np.ndarray:
+    """Per-episode implementation shortfall (bps) of a backtest result, as a 1-D array."""
+    return np.array([m["implementation_shortfall_bps"] for m in res.episode_metrics], dtype=float)
+
+
+def _paired_pvalue(diff: np.ndarray) -> float:
+    """Two-sided p-value of a paired difference series (paired t-test on the differences)."""
+    d = np.asarray(diff, dtype=float)
+    if d.size < 2:
+        return float("nan")
+    if float(d.std(ddof=1)) == 0.0:
+        # Identical series -> no evidence of a difference (p = 1); a non-zero constant shift is
+        # a degenerate "infinitely significant" case, reported as p = 0.
+        return 1.0 if np.isclose(d.mean(), 0.0) else 0.0
+    from scipy import stats
+
+    return float(stats.ttest_1samp(d, 0.0).pvalue)
+
+
+def paired_is_table(
+    results: Dict[str, BacktestResult],
+    benchmark: str = "TWAP",
+    *,
+    ci: bool = True,
+    n_boot: int = 2_000,
+    alpha: float = 0.05,
+    rng: Any = 0,
+) -> pd.DataFrame:
     """Paired comparison of implementation shortfall against a benchmark strategy.
 
     Because every strategy is evaluated on the *same* sequence of seeds (common random
     numbers), the per-episode IS difference cancels the shared price-path risk, giving a
     far lower-variance estimate of skill than comparing absolute means.  Columns:
 
-    * ``IS_bps``        -- mean implementation shortfall (lower = better).
-    * ``vs_<bench>``    -- mean IS improvement over the benchmark (negative = better).
-    * ``win_rate_%``    -- fraction of episodes with lower IS than the benchmark.
-    * ``t_stat``        -- paired t-statistic of the improvement (negative & large = robust).
-    """
+    * ``IS_bps``                 -- mean implementation shortfall (lower = better).
+    * ``vs_<bench>``             -- mean IS improvement over the benchmark (negative = better).
+    * ``win_rate_%``             -- fraction of episodes with lower IS than the benchmark.
+    * ``t_stat``                 -- paired t-statistic of the improvement (negative & large = robust).
+    * ``vs_<bench>_ci_low/high`` -- 95% paired-bootstrap CI of the improvement (when ``ci``).
+    * ``p_value``                -- two-sided paired-t p-value of the improvement (when ``ci``).
 
-    def is_array(res: BacktestResult) -> np.ndarray:
-        return np.array([m["implementation_shortfall_bps"] for m in res.episode_metrics])
+    ``rng`` seeds the bootstrap so the interval columns are reproducible across runs.
+    """
+    from rl_execution.metrics.stats import paired_bootstrap_ci
 
     if benchmark not in results:
         raise KeyError(f"Benchmark '{benchmark}' not in results.")
-    bench = is_array(results[benchmark])
+    bench = episode_is(results[benchmark])
+    gen = np.random.default_rng(rng)
 
     rows = []
     for name, res in results.items():
-        arr = is_array(res)
+        arr = episode_is(res)
         n = min(len(arr), len(bench))
-        diff = arr[:n] - bench[:n]
+        diff: np.ndarray = arr[:n] - bench[:n]
         sd = diff.std(ddof=1) if n > 1 else 0.0
-        rows.append(
-            {
-                "strategy": name,
-                "IS_bps": float(arr.mean()),
-                f"vs_{benchmark}": float(diff.mean()),
-                "win_rate_%": (
-                    float(100.0 * np.mean(diff < 0)) if name != benchmark else float("nan")
-                ),
-                "t_stat": (
-                    float(diff.mean() / (sd / np.sqrt(n) + 1e-12))
-                    if name != benchmark
-                    else float("nan")
-                ),
-            }
-        )
+        is_bench = name == benchmark
+        row: Dict[str, Any] = {
+            "strategy": name,
+            "IS_bps": float(arr.mean()),
+            f"vs_{benchmark}": float(diff.mean()),
+            "win_rate_%": (float("nan") if is_bench else float(100.0 * np.mean(diff < 0))),
+            "t_stat": (
+                float("nan") if is_bench else float(diff.mean() / (sd / np.sqrt(n) + 1e-12))
+            ),
+        }
+        if ci:
+            if is_bench or n < 2:
+                lo = hi = pval = float("nan")
+            else:
+                lo, hi = paired_bootstrap_ci(
+                    arr[:n], bench[:n], n_boot=n_boot, alpha=alpha, rng=gen
+                )
+                pval = _paired_pvalue(diff)
+            row[f"vs_{benchmark}_ci_low"] = lo
+            row[f"vs_{benchmark}_ci_high"] = hi
+            row["p_value"] = pval
+        rows.append(row)
     return pd.DataFrame(rows).set_index("strategy").sort_values("IS_bps")
+
+
+def corrected_significance(
+    results_by_regime: Dict[str, Dict[str, BacktestResult]],
+    benchmark: str = "TWAP",
+    method: str = "holm",
+    alpha: float = 0.05,
+) -> pd.DataFrame:
+    """Multiple-testing-corrected paired significance across the regime x strategy grid.
+
+    For every (regime, non-benchmark strategy) pair, computes the paired IS improvement vs
+    ``benchmark`` and its two-sided p-value, then applies a family-wise / FDR correction
+    (``method`` in {``holm``, ``bh``, ``bonferroni``}) across *all* of those tests jointly --
+    so a regime is only flagged significant after paying for the many comparisons made.
+    Returns a tidy frame with ``vs_<bench>``, raw ``p_value``, ``p_adjusted`` and ``reject_H0``.
+    """
+    from rl_execution.metrics.stats import adjust_pvalues
+
+    rows = []
+    for regime, by_strat in results_by_regime.items():
+        if benchmark not in by_strat:
+            continue
+        bench = episode_is(by_strat[benchmark])
+        for name, res in by_strat.items():
+            if name == benchmark:
+                continue
+            arr = episode_is(res)
+            n = min(len(arr), len(bench))
+            diff: np.ndarray = arr[:n] - bench[:n]
+            rows.append(
+                {
+                    "regime": regime,
+                    "strategy": name,
+                    f"vs_{benchmark}": float(diff.mean()),
+                    "n_episodes": int(n),
+                    "p_value": _paired_pvalue(diff),
+                }
+            )
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    reject, p_adj = adjust_pvalues(df["p_value"].to_numpy(), method=method, alpha=alpha)
+    df["p_adjusted"] = p_adj
+    df["reject_H0"] = reject
+    return df.sort_values(["regime", f"vs_{benchmark}"]).reset_index(drop=True)

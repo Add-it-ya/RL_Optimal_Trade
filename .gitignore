@@ -32,6 +32,7 @@ mlruns/
 mlartifacts/
 mlflow.db
 wandb/
+optuna.db
 
 # Keep directory placeholders
 !**/.gitkeep

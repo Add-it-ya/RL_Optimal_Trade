@@ -7,6 +7,25 @@ All notable changes to this project are documented in this file. The format is b
 ## [Unreleased]
 
 ### Added
+- Statistical & research rigor:
+  - `rl_execution.metrics.stats`: percentile **bootstrap CIs**, a **paired** bootstrap that
+    preserves common-random-number pairing, Holm / Benjamini-Hochberg multiple-testing
+    correction (uses `statsmodels` when present, exact NumPy fallback otherwise) and the
+    **deflated / probabilistic Sharpe ratio** (Bailey-López de Prado).
+  - `paired_is_table` now also reports the paired-bootstrap CI and a two-sided p-value of
+    `vs_<bench>`; new `corrected_significance` Holm-corrects the paired tests across the whole
+    regime × strategy grid so a significant regime is not cherry-picked from many tests.
+  - `rl_execution.experiments.run_multiseed`: multi-seed train/eval with the **training seed**
+    as the unit of analysis — an across-seed bootstrap CI (the headline) plus a within-run
+    episode CI — reusing already-trained `{config_hash, seed}` models from the registry instead
+    of retraining (optional `joblib` parallelism over seeds).
+  - Optuna **hyperparameter optimization** (`optimize`, `make_study`, `search_space`):
+    resumable SQLite-backed studies and per-algorithm search spaces, selecting on a validation
+    split of seeds/regimes disjoint from the final evaluation.
+  - `rlx-experiments` now also writes `results/corrected_significance.csv`; a new `rlx-multiseed`
+    CLI produces the across-seed CIs, and `rlx-report` renders the corrected-significance,
+    across-seed and statistical-methods sections.
+  - `tracking` extra gains `statsmodels`, `optuna` and `joblib`.
 - Reproducibility & experiment tracking:
   - A swappable experiment-tracking abstraction (`rl_execution.tracking`) with MLflow-local
     (default, fully offline), Weights & Biases (opt-in, lazy) and Null (CI/tests) backends,

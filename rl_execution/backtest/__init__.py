@@ -3,6 +3,8 @@
 from rl_execution.backtest.engine import (
     BacktestResult,
     compare_strategies,
+    corrected_significance,
+    episode_is,
     evaluate,
     paired_is_table,
     results_table,
@@ -16,4 +18,6 @@ __all__ = [
     "compare_strategies",
     "results_table",
     "paired_is_table",
+    "corrected_significance",
+    "episode_is",
 ]

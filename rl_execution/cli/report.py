@@ -133,11 +133,56 @@ def main():
         parts.append(
             "Each strategy is evaluated on the *same* price paths as TWAP, so `vs_TWAP` "
             "(mean IS improvement, **negative = better**) and `win_rate_%` isolate skill "
-            "from shared price risk; `t_stat` is the paired t-statistic (large negative = "
-            "robust improvement).\n"
+            "from shared price risk. `t_stat` is the paired t-statistic, "
+            "`vs_TWAP_ci_low/high` the 95% paired-bootstrap confidence interval (a CI fully "
+            "below 0 = a robust improvement) and `p_value` the two-sided paired-t p-value.\n"
         )
         pdf = pd.read_csv(paired_csv)
         parts.append(df_to_md(pdf) + "\n")
+
+    corrected_csv = RESULTS_DIR / "corrected_significance.csv"
+    if corrected_csv.exists():
+        parts.append("### 4.2c Multiple-testing-corrected significance (Holm)\n")
+        parts.append(
+            "Paired improvement vs TWAP for every strategy in every regime, with two-sided "
+            "p-values **Holm-corrected across the entire regime × strategy grid** so a single "
+            "significant cell is not cherry-picked from many simultaneous tests. `reject_H0` "
+            "flags cells significant at the 5% family-wise level after correction.\n"
+        )
+        parts.append(df_to_md(pd.read_csv(corrected_csv)) + "\n")
+
+    across_csv = RESULTS_DIR / "multiseed_across_seed.csv"
+    if across_csv.exists():
+        parts.append("### 4.2d Across-seed robustness (CI over training seeds)\n")
+        parts.append(
+            "The honest unit of analysis is the **training seed**, not the episode. Each row "
+            "is the mean `vs_TWAP` improvement averaged over independently-trained seeds with "
+            "a bootstrap CI taken **across seeds** (guarding against pseudo-replication). An "
+            "interval lying entirely below 0 means the agent beats TWAP robustly to the "
+            "training seed, not merely on one lucky run.\n"
+        )
+        parts.append(df_to_md(pd.read_csv(across_csv)) + "\n")
+
+    methods = []
+    if corrected_csv.exists():
+        methods.append(
+            "- **Multiple testing:** paired two-sided t-tests of per-episode IS differences vs "
+            "TWAP, Holm-corrected across the full regime × strategy grid."
+        )
+    if across_csv.exists():
+        adf = pd.read_csv(across_csv)
+        n_seeds = int(adf["n_seeds"].max()) if "n_seeds" in adf and len(adf) else 0
+        methods.append(
+            f"- **Across-seed CIs:** percentile bootstrap over {n_seeds} independently-trained "
+            "seeds; the training seed is the experimental unit for the headline claim."
+        )
+    if methods:
+        methods.append(
+            "- **Pairing:** every comparison uses common random numbers (identical price paths "
+            "per episode), so shared price-path risk cancels in the difference."
+        )
+        parts.append("### 4.2e Methods (statistical rigor)\n")
+        parts.append("\n".join(methods) + "\n")
 
     parts.append("### 4.3 Figures\n")
     for title, f in [
