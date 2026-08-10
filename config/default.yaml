@@ -16,6 +16,22 @@ market:
   drift: 0.0
   mean_reversion: 0.0
   vol_of_vol: 0.2
+
+  # --- Brownian-motion layer (rl_execution/envs/processes.py) ---
+  # price_process: legacy keeps the original inline multiplicative walk so previously
+  #   published results reproduce bit-for-bit.  abm / gbm / ou select an explicit SDE with
+  #   an exact discretisation, draw the whole exogenous market before the agent acts, and
+  #   apply market impact as an additive overlay.  Use 'abm' for the Almgren-Chriss world.
+  price_process: legacy
+  dt: 1.0                    # time spanned by one decision step, in volatility units
+  rng_mode: legacy           # legacy = one shared stream | streams = independent substreams
+  normal_method: ziggurat    # ziggurat | inverse_cdf (monotone; needed for QMC)
+  vol_process: iid_lognormal # none | iid_lognormal | expou (volatility clustering)
+  vol_persistence: 0.0       # AR(1) persistence of ln(sigma) under 'expou'
+  leverage_corr: 0.0         # corr(dW_price, dW_vol); negative = vol rises as price falls
+  imbalance_ou_scaling: false  # true => sqrt(1-phi^2) innovations (stationary unit variance)
+  latency_model: adverse     # adverse (always costly) | bridge (unbiased Brownian bridge)
+
   permanent_impact: 5.0e-6
   temporary_impact: 1.0e-5
   imbalance_persistence: 0.85

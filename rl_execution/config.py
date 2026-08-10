@@ -59,11 +59,22 @@ class MarketConfig:
     level_growth: float = 0.15  # fractional depth increase per level into the book
     depth_vol: float = 0.25  # relative log-noise applied to resting size
 
-    # --- price dynamics (per step) ---
-    volatility: float = 0.02  # std of per-step mid return (fraction of price)
-    drift: float = 0.0  # per-step expected return (regime: +bull / -bear)
+    # --- price dynamics (per unit time; one step spans ``dt``) ---
+    volatility: float = 0.02  # std of the mid return per unit time (fraction of price)
+    drift: float = 0.0  # expected return per unit time (regime: +bull / -bear)
     mean_reversion: float = 0.0  # OU pull toward initial price (sideways regime)
-    vol_of_vol: float = 0.0  # stochastic-volatility log-noise on per-step sigma
+    vol_of_vol: float = 0.0  # stochastic-volatility log-noise on sigma
+
+    # --- Brownian-motion layer (see rl_execution.envs.processes) ---
+    price_process: str = "legacy"  # legacy | abm | gbm | ou
+    dt: float = 1.0  # time spanned by one decision step, in volatility units
+    rng_mode: str = "legacy"  # legacy (one shared stream) | streams (independent substreams)
+    normal_method: str = "ziggurat"  # ziggurat | inverse_cdf (monotone; needed for QMC)
+    vol_process: str = "iid_lognormal"  # none | iid_lognormal | expou (clustering)
+    vol_persistence: float = 0.0  # AR(1) persistence of ln(sigma) under 'expou'
+    leverage_corr: float = 0.0  # corr(dW_price, dW_vol); < 0 = vol rises as price falls
+    imbalance_ou_scaling: bool = False  # sqrt(1-phi^2) innovations => unit-variance imbalance
+    latency_model: str = "adverse"  # adverse (always costly) | bridge (unbiased Brownian bridge)
 
     # --- microstructure / impact ---
     permanent_impact: float = 5.0e-6  # mid shift per share executed (Kyle-lambda style)
@@ -254,6 +265,18 @@ class RunConfig:
             "initial_price > 0": m.initial_price > 0.0,
             "horizon > 0": e.horizon > 0,
             "total_inventory > 0": e.total_inventory > 0.0,
+            # --- Brownian layer ---
+            "price_process in {legacy, abm, gbm, ou}": m.price_process
+            in {"legacy", "abm", "gbm", "ou"},
+            "dt > 0": m.dt > 0.0,
+            "rng_mode in {legacy, streams}": m.rng_mode in {"legacy", "streams"},
+            "normal_method in {ziggurat, inverse_cdf}": m.normal_method
+            in {"ziggurat", "inverse_cdf"},
+            "vol_process in {none, iid_lognormal, expou}": m.vol_process
+            in {"none", "iid_lognormal", "expou"},
+            "0 <= vol_persistence < 1": 0.0 <= m.vol_persistence < 1.0,
+            "-1 <= leverage_corr <= 1": -1.0 <= m.leverage_corr <= 1.0,
+            "latency_model in {adverse, bridge}": m.latency_model in {"adverse", "bridge"},
         }
         failed = [name for name, ok in checks.items() if not ok]
         if failed:

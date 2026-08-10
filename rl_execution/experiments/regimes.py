@@ -54,10 +54,53 @@ REGIMES: Dict[str, MarketConfig] = {
     "sideways": replace(_BASE, drift=0.0, mean_reversion=0.10),
 }
 
+# --- Brownian-process regimes -------------------------------------------------------
+# These select an explicit SDE (rl_execution.envs.processes) instead of the historical
+# inline update, and run on independent RNG substreams so the exogenous market path is
+# fixed before the agent acts.
+_BROWNIAN = replace(_BASE, rng_mode="streams", price_process="gbm")
+
+REGIMES.update(
+    {
+        # Arithmetic Brownian motion, no alpha, no drift, constant volatility: exactly the
+        # world in which the closed-form Almgren-Chriss schedule is optimal.  A learned
+        # policy should converge to it, which makes this the framework's ground truth.
+        "abm_ac_optimal": replace(
+            _BROWNIAN,
+            price_process="abm",
+            drift=0.0,
+            imbalance_alpha=0.0,
+            vol_process="none",
+            vol_of_vol=0.0,
+            base_depth=1500.0,  # deep book => book-walk cost stays close to AC's linear model
+            base_spread=0.01,
+        ),
+        # Geometric Brownian motion: same economics as the default regime, different price
+        # model.  Used to check that strategy rankings are not an artefact of the dynamics.
+        "gbm_medium": replace(_BROWNIAN, volatility=0.02, vol_process="none", vol_of_vol=0.0),
+        # Volatility clustering via an exponential-OU log-volatility process.  This is what
+        # gives the env's `volatility` observation feature genuine forecast value.
+        "clustered_vol": replace(
+            _BROWNIAN, volatility=0.02, vol_process="expou", vol_of_vol=0.5, vol_persistence=0.90
+        ),
+        # Clustering plus the leverage effect: volatility rises as the price falls, which is
+        # the asymmetry a seller working a large order actually faces.
+        "leverage": replace(
+            _BROWNIAN,
+            volatility=0.02,
+            vol_process="expou",
+            vol_of_vol=0.5,
+            vol_persistence=0.90,
+            leverage_corr=-0.5,
+        ),
+    }
+)
+
 REGIME_GROUPS: Dict[str, List[str]] = {
     "volatility": ["low_vol", "medium_vol", "high_vol"],
     "liquidity": ["thin", "normal_liquidity", "deep"],
     "trend": ["bull", "bear", "sideways"],
+    "brownian": ["abm_ac_optimal", "gbm_medium", "clustered_vol", "leverage"],
 }
 
 
@@ -71,10 +114,19 @@ def get_regime(name: str) -> MarketConfig:
     return replace(REGIMES[name])  # return a copy
 
 
-def randomized_market_config(rng: np.random.Generator | None = None) -> MarketConfig:
-    """Sample a market config spanning the regime axes (for robust training)."""
+def randomized_market_config(
+    rng: np.random.Generator | None = None, brownian: bool = False
+) -> MarketConfig:
+    """Sample a market config spanning the regime axes (for robust training).
+
+    With ``brownian=True`` the sampler additionally randomises over the Brownian axes --
+    price process, volatility clustering and the leverage correlation -- so a
+    domain-randomised agent also generalises across *price models*, not just across
+    parameters of one model.  The default is the historical (non-Brownian) sampler so
+    existing training runs are unchanged.
+    """
     rng = rng or np.random.default_rng()
-    return MarketConfig(
+    cfg = MarketConfig(
         volatility=float(rng.uniform(0.008, 0.05)),
         vol_of_vol=float(rng.uniform(0.0, 0.5)),
         drift=float(rng.uniform(-0.001, 0.001)),
@@ -87,4 +139,17 @@ def randomized_market_config(rng: np.random.Generator | None = None) -> MarketCo
         imbalance_alpha=float(rng.uniform(0.03, 0.07)),
         imbalance_strength=0.40,
         imbalance_persistence=0.85,
+    )
+    if not brownian:
+        return cfg
+    mean_reversion = float(cfg.mean_reversion)
+    return replace(
+        cfg,
+        rng_mode="streams",
+        price_process=str(
+            rng.choice(["gbm", "abm", "ou"] if mean_reversion > 0 else ["gbm", "abm"])
+        ),
+        vol_process=str(rng.choice(["none", "expou"])),
+        vol_persistence=float(rng.uniform(0.5, 0.95)),
+        leverage_corr=float(rng.uniform(-0.7, 0.0)),
     )

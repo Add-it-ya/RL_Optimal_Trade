@@ -9,6 +9,8 @@ from rl_execution.backtest.engine import (
     paired_is_table,
     results_table,
     run_episode,
+    schedule_gap,
+    schedule_gap_table,
 )
 
 __all__ = [
@@ -20,4 +22,6 @@ __all__ = [
     "paired_is_table",
     "corrected_significance",
     "episode_is",
+    "schedule_gap",
+    "schedule_gap_table",
 ]

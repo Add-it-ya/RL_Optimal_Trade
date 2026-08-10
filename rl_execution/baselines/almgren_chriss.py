@@ -34,15 +34,39 @@ class AlmgrenChriss(BaseStrategy):
         super().reset(env)
         self.trades = self._optimal_trades()
 
+    def _reference_price(self) -> float:
+        """Price level at which the model's relative volatility is made absolute."""
+        market = getattr(self.env, "market", None)
+        mid = getattr(market, "mid", None)
+        if mid is not None and float(mid) > 0:
+            return float(mid)
+        return float(self.env.market_config.initial_price)
+
+    def _absolute_volatility(self) -> float:
+        """Per-step price volatility in cash units, matched to the simulator's process.
+
+        The closed form is derived for *arithmetic* Brownian motion, so ``sigma`` must be an
+        absolute price volatility.  Under ``price_process='abm'`` the simulator uses exactly
+        ``volatility * initial_price``, which makes the schedule genuinely optimal there.
+        Under a geometric process the corresponding local volatility is ``volatility * S``,
+        evaluated at the arrival price -- a first-order match rather than an exact one.
+        ``legacy`` keeps the historical convention unchanged.
+        """
+        cfg = self.env.market_config
+        sigma_rel = float(cfg.volatility) * np.sqrt(float(getattr(cfg, "dt", 1.0)))
+        if str(getattr(cfg, "price_process", "legacy")) == "gbm":
+            return sigma_rel * self._reference_price()
+        return sigma_rel * float(cfg.initial_price)
+
     def _optimal_trades(self) -> np.ndarray:
         cfg = self.env.market_config
         N = self.horizon
-        tau = 1.0
+        tau = float(getattr(cfg, "dt", 1.0))
         X = self.total
         eta = cfg.temporary_impact
         gamma = cfg.permanent_impact
         lam = self.risk_aversion
-        sigma = cfg.volatility * cfg.initial_price  # absolute per-step price volatility
+        sigma = self._absolute_volatility()  # absolute per-step price volatility
 
         eta_tilde = eta - 0.5 * gamma * tau
         if lam <= 0 or eta_tilde <= 0:
@@ -62,5 +86,5 @@ class AlmgrenChriss(BaseStrategy):
 
     def _decide_fraction(self, obs: np.ndarray, info: Dict[str, Any]) -> float:
         t = self.step_index
-        target = self.trades[t] if t < len(self.trades) else self.remaining
+        target = float(self.trades[t]) if t < len(self.trades) else self.remaining
         return self._shares_to_fraction(target, self.remaining)

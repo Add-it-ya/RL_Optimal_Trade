@@ -227,6 +227,78 @@ def plot_price_path(result, episode: int = 0, save: Optional[str] = None):
     return fig
 
 
+# --------------------------------------------------------------------------- brownian
+def plot_brownian_paths(
+    paths: np.ndarray, sigma: float, s0: float = 100.0, save: Optional[str] = None
+):
+    """Sample price paths with the theoretical ``+/- sigma sqrt(t)`` diffusion envelope.
+
+    ``paths`` is ``(n_paths, n_steps + 1)``.  The envelope is what makes the square-root-of-
+    time scaling of Brownian motion visible: the spread of the paths should track it.
+    """
+    set_style()
+    fig, ax = plt.subplots(figsize=(8, 5))
+    steps = np.arange(paths.shape[1])
+    for row in paths[:40]:
+        ax.plot(steps, row, lw=0.8, alpha=0.45, color="#33658a")
+    envelope = sigma * s0 * np.sqrt(steps)
+    ax.plot(steps, s0 + envelope, color="#d1495b", ls="--", lw=1.6, label=r"$\pm\sigma\sqrt{t}$")
+    ax.plot(steps, s0 - envelope, color="#d1495b", ls="--", lw=1.6)
+    ax.plot(steps, paths.mean(axis=0), color="#111111", lw=2.0, label="Mean path")
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Price")
+    ax.set_title(f"Brownian price paths ({paths.shape[0]} simulations)")
+    ax.legend(fontsize=8)
+    if save:
+        save_fig(fig, save)
+    return fig
+
+
+def plot_return_qq(returns: np.ndarray, save: Optional[str] = None):
+    """Normal QQ-plot of simulated returns -- a straight line means Gaussian increments."""
+    set_style()
+    from scipy import stats as _stats
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+    _stats.probplot(np.asarray(returns, dtype=float).ravel(), dist="norm", plot=ax)
+    ax.get_lines()[0].set(markersize=3, alpha=0.5, color="#33658a")
+    ax.get_lines()[1].set(color="#d1495b", lw=1.6)
+    ax.set_title("Normal QQ-plot of simulated returns")
+    if save:
+        save_fig(fig, save)
+    return fig
+
+
+def plot_vol_acf(
+    returns_by_label: Dict[str, np.ndarray], max_lag: int = 20, save: Optional[str] = None
+):
+    """Autocorrelation of ``|returns|`` -- the standard fingerprint of volatility clustering.
+
+    An i.i.d. volatility model sits flat at zero; an exponential-OU log-volatility process
+    decays slowly, which is what real markets show and what gives the environment's
+    ``volatility`` observation feature genuine forecast value.
+    """
+    set_style()
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for label, rets in returns_by_label.items():
+        x = np.abs(np.asarray(rets, dtype=float).ravel())
+        x = x - x.mean()
+        denom = float((x * x).mean())
+        acf = [
+            float((x[:-k] * x[k:]).mean() / denom) if denom > 0 else 0.0
+            for k in range(1, max_lag + 1)
+        ]
+        ax.plot(range(1, max_lag + 1), acf, marker="o", ms=3, label=label)
+    ax.axhline(0.0, color="#888888", lw=1.0)
+    ax.set_xlabel("Lag (steps)")
+    ax.set_ylabel(r"Autocorrelation of $|r_t|$")
+    ax.set_title("Volatility clustering")
+    ax.legend(fontsize=8)
+    if save:
+        save_fig(fig, save)
+    return fig
+
+
 def plot_regime_heatmap(regime_df: pd.DataFrame, value: str = "IS_bps", save: Optional[str] = None):
     """Heatmap of a metric across (strategy x regime)."""
     set_style()

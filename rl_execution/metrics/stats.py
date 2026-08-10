@@ -77,6 +77,13 @@ def bootstrap_ci(
     return (float(np.quantile(stats, alpha / 2)), float(np.quantile(stats, 1 - alpha / 2)))
 
 
+def _block_indices(gen: np.random.Generator, n: int, block: int, n_boot: int) -> np.ndarray:
+    """Bootstrap indices that resample contiguous blocks of length ``block``."""
+    n_blocks = n // block
+    starts = gen.integers(0, n_blocks, size=(n_boot, n_blocks)) * block
+    return (starts[:, :, None] + np.arange(block)).reshape(n_boot, n_blocks * block)
+
+
 def paired_bootstrap_ci(
     strat: ArrayLike,
     bench: ArrayLike,
@@ -84,6 +91,7 @@ def paired_bootstrap_ci(
     n_boot: int = 10_000,
     alpha: float = 0.05,
     rng: RngLike = None,
+    block: int = 1,
 ) -> Tuple[float, float]:
     """Percentile bootstrap CI for ``stat(strat - bench)`` preserving CRN pairing.
 
@@ -91,6 +99,11 @@ def paired_bootstrap_ci(
     of resampled *episode indices* is applied to the per-episode difference, so the
     common-random-number pairing is never broken.  Returns the CI of the paired delta
     (for IS-style costs, ``< 0`` means the strategy beats the benchmark).
+
+    ``block > 1`` resamples contiguous blocks of that length instead of individual episodes.
+    Antithetic evaluation (``evaluate(antithetic=True)``) emits episodes in dependent pairs,
+    so its episodes are *not* i.i.d.; resampling them individually would understate the
+    variance and produce an anti-conservative interval.  Pass ``block=2`` there.
     """
     s = _as_1d(strat)
     b = _as_1d(bench)
@@ -101,8 +114,12 @@ def paired_bootstrap_ci(
     if n == 1:
         v = float(stat(diff))
         return (v, v)
+    block = max(int(block), 1)
     gen = np.random.default_rng(rng)
-    idx = gen.integers(0, n, size=(n_boot, n))
+    if block > 1 and n // block >= 2:
+        idx = _block_indices(gen, n, block, n_boot)
+    else:
+        idx = gen.integers(0, n, size=(n_boot, n))
     stats = _apply_stat(diff[idx], stat)
     return (float(np.quantile(stats, alpha / 2)), float(np.quantile(stats, 1 - alpha / 2)))
 
