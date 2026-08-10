@@ -104,13 +104,33 @@ REGIME_GROUPS: Dict[str, List[str]] = {
 }
 
 
-def list_regimes() -> List[str]:
-    return list(REGIMES.keys())
+#: The nine regimes that make up the standard evaluation grid.
+CLASSIC_REGIMES: List[str] = [
+    name for group in ("volatility", "liquidity", "trend") for name in REGIME_GROUPS[group]
+]
+#: Regimes that swap in an explicit Brownian price process (opt-in; see :func:`list_regimes`).
+BROWNIAN_REGIMES: List[str] = list(REGIME_GROUPS["brownian"])
+
+
+def list_regimes(include_brownian: bool = False) -> List[str]:
+    """Names of the standard evaluation regimes.
+
+    The Brownian-process regimes are **excluded by default**.  They run a different price
+    model, so folding them into the standard grid would silently change the headline
+    "beats the benchmark in N/N regimes" count *and* enlarge the family of tests that
+    :func:`~rl_execution.backtest.engine.corrected_significance` corrects over -- which
+    moves the adjusted p-value of every pre-existing comparison.
+
+    Pass ``include_brownian=True``, or name them explicitly
+    (``rlx-experiments --regimes abm_ac_optimal gbm_medium ...``), to evaluate them as a
+    separate, labelled grid.
+    """
+    return CLASSIC_REGIMES + BROWNIAN_REGIMES if include_brownian else list(CLASSIC_REGIMES)
 
 
 def get_regime(name: str) -> MarketConfig:
     if name not in REGIMES:
-        raise KeyError(f"Unknown regime '{name}'. Available: {list_regimes()}")
+        raise KeyError(f"Unknown regime '{name}'. Available: {list(REGIMES)}")
     return replace(REGIMES[name])  # return a copy
 
 

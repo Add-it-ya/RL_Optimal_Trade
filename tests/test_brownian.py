@@ -32,7 +32,12 @@ from rl_execution.envs.processes import (
     make_price_process,
     volatility_path,
 )
-from rl_execution.experiments.regimes import get_regime, list_regimes
+from rl_execution.experiments.regimes import (
+    BROWNIAN_REGIMES,
+    get_regime,
+    list_regimes,
+    randomized_market_config,
+)
 from rl_execution.metrics.stats import paired_bootstrap_ci
 
 
@@ -556,12 +561,36 @@ def test_block_bootstrap_is_wider_for_dependent_pairs():
 # =============================================================== regimes & AC validation
 def test_brownian_regimes_are_registered_and_valid():
     for name in ("abm_ac_optimal", "gbm_medium", "clustered_vol", "leverage"):
-        assert name in list_regimes()
+        assert name in list_regimes(include_brownian=True)
         cfg = get_regime(name)
         assert cfg.rng_mode == "streams"
         RunConfig(market=cfg).validate()
     assert get_regime("abm_ac_optimal").price_process == "abm"
     assert get_regime("leverage").leverage_corr < 0
+
+
+def test_brownian_regimes_are_excluded_from_the_default_grid():
+    """The standard grid must stay at nine regimes.
+
+    ``rlx-experiments`` and ``rlx-multiseed`` default to ``list_regimes()``, and
+    ``corrected_significance`` Holm-corrects across the whole regime x strategy family --
+    so quietly adding regimes would move the adjusted p-value of every existing comparison.
+    """
+    default = list_regimes()
+    assert len(default) == 9
+    assert not set(default) & set(BROWNIAN_REGIMES)
+    assert len(list_regimes(include_brownian=True)) == 13
+
+
+def test_randomized_config_can_sample_brownian_axes():
+    rng = np.random.default_rng(0)
+    sampled = [randomized_market_config(rng, brownian=True) for _ in range(30)]
+    assert all(c.rng_mode == "streams" for c in sampled)
+    assert {c.price_process for c in sampled} <= {"gbm", "abm", "ou"}
+    assert {c.vol_process for c in sampled} <= {"none", "expou"}
+    assert all(-0.7 <= c.leverage_corr <= 0.0 for c in sampled)
+    # the default sampler is unchanged
+    assert randomized_market_config(np.random.default_rng(0)).price_process == "legacy"
 
 
 def test_ac_schedule_matches_itself_and_differs_from_twap():
