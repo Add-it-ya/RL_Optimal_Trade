@@ -18,7 +18,8 @@ instead of being retrained, so re-running an analysis (or resuming after a crash
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Optional, Sequence
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
@@ -69,7 +70,13 @@ def _find_cached_version(name: str, cfg_hash: str, seed: int) -> Optional[str]:
     return str(best) if best is not None else None
 
 
-def _get_or_train_agent(agent_name: str, run_config: RunConfig, seed: int, register: bool) -> Any:
+def _get_or_train_agent(
+    agent_name: str,
+    run_config: RunConfig,
+    seed: int,
+    register: bool,
+    models_dir: Optional[Union[str, Path]] = None,
+) -> Any:
     """Load the cached policy for ``{config, seed}`` if registered, else train + register it."""
     base = _norm(agent_name)
     rc_seed = replace(run_config, agent=agent_name, seed=seed)
@@ -100,12 +107,14 @@ def _get_or_train_agent(agent_name: str, run_config: RunConfig, seed: int, regis
     )
     if register:
         file_tag = f"{base}-s{seed}"
-        save_agent(agent, agent_name, tag=file_tag, seed=seed, config=rc_seed)
+        save_agent(
+            agent, agent_name, tag=file_tag, seed=seed, config=rc_seed, models_dir=models_dir
+        )
         try:
             from rl_execution.tracking.registry import register_model
 
             register_model(
-                str(model_artifact_path(agent_name, file_tag)),
+                str(model_artifact_path(agent_name, file_tag, models_dir=models_dir)),
                 base,
                 {"agent": base, "seed": seed, "config_hash": cfg_hash, "git_sha": git_sha()},
             )
@@ -123,10 +132,11 @@ def _run_one_seed(
     episodes: int,
     register: bool,
     keep_pairs: bool,
+    models_dir: Optional[Union[str, Path]] = None,
 ) -> Dict[str, Any]:
     """Train/load one seed, evaluate it across regimes, return per-regime paired summaries."""
     disp = _display(agent_name)
-    agent = _get_or_train_agent(agent_name, run_config, seed, register)
+    agent = _get_or_train_agent(agent_name, run_config, seed, register, models_dir)
     strategies = {benchmark: build_baselines()[benchmark], disp: AgentStrategy(agent, disp)}
     action_types = {disp: required_action_type(agent_name)}
     results = evaluate_across_regimes(
@@ -218,6 +228,7 @@ def run_multiseed(
     episodes: Optional[int] = None,
     register: bool = True,
     n_jobs: int = 1,
+    models_dir: Optional[Union[str, Path]] = None,
 ) -> MultiSeedResult:
     """Train/evaluate ``agent_name`` across ``seeds`` and aggregate with across-seed CIs.
 
@@ -226,6 +237,7 @@ def run_multiseed(
     ``benchmark`` on a fixed set of evaluation seeds (so eval noise is shared and the only
     varying ingredient is the training seed).  ``n_jobs`` parallelises seeds with joblib when
     ``> 1`` (each seed writes a distinct ``<agent>-s<seed>`` artifact, so there is no clobber).
+    ``models_dir`` overrides where those artifacts are written (default: ``models/``).
     """
     run_config = run_config or RunConfig(agent=agent_name)
     regimes = list(regimes or list_regimes())
@@ -233,7 +245,7 @@ def run_multiseed(
     seed_list = [int(s) for s in seeds]
 
     args = [
-        (agent_name, run_config, s, regimes, benchmark, episodes, register, i == 0)
+        (agent_name, run_config, s, regimes, benchmark, episodes, register, i == 0, models_dir)
         for i, s in enumerate(seed_list)
     ]
     outputs = _map_seeds(args, n_jobs)

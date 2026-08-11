@@ -7,9 +7,13 @@ of figures into ``results/`` and ``reports/figures/``.
 
 Examples
 --------
-    rlx-experiments --quick                 # fast smoke pipeline
+    rlx-experiments --quick                 # fast smoke pipeline (sandboxed under results/quick)
     rlx-experiments --timesteps 120000 --episodes 200
     rlx-experiments --no-train              # reuse saved models
+    rlx-experiments --out-dir results/exp1 --models-dir models/exp1
+
+``--quick`` writes to ``results/quick`` and ``models/quick`` unless ``--out-dir`` /
+``--models-dir`` say otherwise, so a smoke run can never overwrite published artefacts.
 """
 
 from __future__ import annotations
@@ -38,6 +42,7 @@ from rl_execution.utils.io import (
     FIGURES_DIR,
     RESULTS_DIR,
     ensure_dir,
+    resolve_artifact_dirs,
     save_json,
     save_pickle,
 )
@@ -67,6 +72,16 @@ def parse_args():
     p.add_argument("--no-train", action="store_true", help="reuse saved models")
     p.add_argument("--quick", action="store_true", help="tiny budget for a fast demo")
     p.add_argument(
+        "--out-dir",
+        default=None,
+        help="where to write tables/pickles (default: results/, or results/quick/ under --quick)",
+    )
+    p.add_argument(
+        "--models-dir",
+        default=None,
+        help="where to read/write models (default: models/, or models/quick/ under --quick)",
+    )
+    p.add_argument(
         "--tracker",
         default="auto",
         choices=["auto", "mlflow", "wandb", "null"],
@@ -89,8 +104,16 @@ def main():
     exec_config = ExecutionConfig(
         total_inventory=args.inventory, horizon=args.horizon, side=Side(args.side)
     )
-    ensure_dir(RESULTS_DIR)
-    ensure_dir(FIGURES_DIR)
+    # A --quick smoke run writes to results/quick and models/quick unless the user says
+    # otherwise, so tiny-budget numbers can never overwrite the published artefacts.
+    results_dir, models_dir = resolve_artifact_dirs(args.out_dir, args.models_dir, quick=args.quick)
+    # Figures follow the results dir: a sandboxed run must not overwrite the published
+    # reports/figures/*.png that REPORT.md refers to either.
+    figures_dir = FIGURES_DIR if results_dir == RESULTS_DIR else results_dir / "figures"
+    ensure_dir(results_dir)
+    ensure_dir(models_dir)
+    ensure_dir(figures_dir)
+    print(f"Writing results -> {results_dir}  models -> {models_dir}  figures -> {figures_dir}")
 
     # ---- experiment tracking ----------------------------------------------------
     tracker = get_tracker(args.tracker, experiment=args.experiment)
@@ -104,6 +127,8 @@ def main():
             "episodes": args.episodes,
             "seed": args.seed,
             "device": args.device,
+            "out_dir": str(results_dir),
+            "models_dir": str(models_dir),
             "execution": exec_config.to_dict(),
         },
         tags={"agents": ",".join(args.agents), "seed": args.seed, "git_sha": git_sha()},
@@ -119,7 +144,7 @@ def main():
         if args.no_train:
             print(f"Loading saved agent '{name}' ...")
             env = make_env(name, exec_config, randomized=True, seed=args.seed)
-            agent = load_agent(name, env)
+            agent = load_agent(name, env, models_dir=models_dir)
         else:
             t0 = time.time()
             print(f"Training {disp} for {args.timesteps:,} steps ...")
@@ -149,12 +174,13 @@ def main():
                 meta={"episode_rewards": reward_logs[disp], "exec_config": exec_config.to_dict()},
                 seed=args.seed,
                 config=rc,
+                models_dir=models_dir,
             )
             for i, r in enumerate(reward_logs[disp]):
                 tracker.log_metrics({f"train/{name}/episode_reward": r}, step=i)
             if register:
                 tracker.log_model(
-                    str(model_artifact_path(name, name)),
+                    str(model_artifact_path(name, name, models_dir=models_dir)),
                     name=name,
                     metadata={
                         "seed": args.seed,
@@ -185,11 +211,11 @@ def main():
         progress=False,
     )
     df = regime_results_frame(results)
-    df.to_csv(RESULTS_DIR / "regime_results.csv", index=False)
-    save_pickle(results, RESULTS_DIR / "results.pkl")
+    df.to_csv(results_dir / "regime_results.csv", index=False)
+    save_pickle(results, results_dir / "results.pkl")
     if reward_logs:
-        save_json(reward_logs, RESULTS_DIR / "reward_logs.json")
-    print("\nSaved results table -> results/regime_results.csv")
+        save_json(reward_logs, results_dir / "reward_logs.json")
+    print(f"\nSaved results table -> {results_dir / 'regime_results.csv'}")
 
     # ---- figures ----------------------------------------------------------------
     rep = "normal_liquidity" if "normal_liquidity" in regimes else regimes[0]
@@ -198,43 +224,43 @@ def main():
     from rl_execution.backtest import results_table
 
     rep_table = results_table(rep_res)
-    viz.plot_inventory_decay(rep_res, save=str(FIGURES_DIR / "inventory_decay.png"))
-    viz.plot_execution_schedule(rep_res, save=str(FIGURES_DIR / "execution_schedule.png"))
-    viz.plot_reward_curve(rep_res, save=str(FIGURES_DIR / "reward_curve.png"))
-    viz.plot_cost_comparison(rep_table, save=str(FIGURES_DIR / "cost_comparison.png"))
-    viz.plot_rl_vs_baselines(rep_table, rl_names, save=str(FIGURES_DIR / "rl_vs_baselines.png"))
-    viz.plot_is_distribution(rep_res, save=str(FIGURES_DIR / "is_distribution.png"))
+    viz.plot_inventory_decay(rep_res, save=str(figures_dir / "inventory_decay.png"))
+    viz.plot_execution_schedule(rep_res, save=str(figures_dir / "execution_schedule.png"))
+    viz.plot_reward_curve(rep_res, save=str(figures_dir / "reward_curve.png"))
+    viz.plot_cost_comparison(rep_table, save=str(figures_dir / "cost_comparison.png"))
+    viz.plot_rl_vs_baselines(rep_table, rl_names, save=str(figures_dir / "rl_vs_baselines.png"))
+    viz.plot_is_distribution(rep_res, save=str(figures_dir / "is_distribution.png"))
     if rl_names and rl_names[0] in rep_res:
-        viz.plot_price_path(rep_res[rl_names[0]], save=str(FIGURES_DIR / "sample_path.png"))
-    viz.plot_regime_heatmap(df, value="IS_bps", save=str(FIGURES_DIR / "regime_heatmap.png"))
+        viz.plot_price_path(rep_res[rl_names[0]], save=str(figures_dir / "sample_path.png"))
+    viz.plot_regime_heatmap(df, value="IS_bps", save=str(figures_dir / "regime_heatmap.png"))
     if reward_logs:
-        viz.plot_training_curve(reward_logs, save=str(FIGURES_DIR / "training_curves.png"))
-    print("Saved figures -> reports/figures/")
+        viz.plot_training_curve(reward_logs, save=str(figures_dir / "training_curves.png"))
+    print(f"Saved figures -> {figures_dir}")
 
     # ---- paired comparison + multiple-testing-corrected significance (for the report) ----
     from rl_execution.backtest import corrected_significance, paired_is_table
 
     paired = paired_is_table(rep_res, benchmark="TWAP")
-    paired.to_csv(RESULTS_DIR / "paired_vs_twap.csv")
+    paired.to_csv(results_dir / "paired_vs_twap.csv")
     # Holm-correct the paired tests across the full regime x strategy grid so the report does
     # not cherry-pick a significant regime out of many. Cheap: just t-tests on existing results.
     corrected = corrected_significance(results, benchmark="TWAP", method="holm")
-    corrected.to_csv(RESULTS_DIR / "corrected_significance.csv", index=False)
+    corrected.to_csv(results_dir / "corrected_significance.csv", index=False)
 
     # ---- headline summary -------------------------------------------------------
     _print_headline(df, rl_names, rep, results=results)
     summary = _summary_dict(df, rl_names)
-    save_json(summary, RESULTS_DIR / "summary.json")
+    save_json(summary, results_dir / "summary.json")
 
     # ---- log results to the tracker --------------------------------------------
     for artifact in (
-        RESULTS_DIR / "regime_results.csv",
-        RESULTS_DIR / "summary.json",
-        RESULTS_DIR / "paired_vs_twap.csv",
-        RESULTS_DIR / "corrected_significance.csv",
+        results_dir / "regime_results.csv",
+        results_dir / "summary.json",
+        results_dir / "paired_vs_twap.csv",
+        results_dir / "corrected_significance.csv",
     ):
         tracker.log_artifact(str(artifact))
-    for fig in sorted(FIGURES_DIR.glob("*.png")):
+    for fig in sorted(figures_dir.glob("*.png")):
         tracker.log_artifact(str(fig))
     if "win_rates" in summary:
         tracker.log_metrics({f"win_rate/{k}": v for k, v in summary["win_rates"].items()})

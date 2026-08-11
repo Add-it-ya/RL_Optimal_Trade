@@ -15,6 +15,7 @@ from rl_execution.utils.io import (
     ensure_dir,
     load_json,
     load_pickle,
+    resolve_artifact_dirs,
     save_json,
     save_pickle,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "load_json",
     "save_pickle",
     "load_pickle",
+    "resolve_artifact_dirs",
     "load_config",
     "dump_config",
     "load_run_config",

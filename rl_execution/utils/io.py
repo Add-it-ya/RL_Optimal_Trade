@@ -21,6 +21,26 @@ def ensure_dir(path: os.PathLike | str) -> Path:
     return p
 
 
+def resolve_artifact_dirs(
+    out_dir: os.PathLike | str | None = None,
+    models_dir: os.PathLike | str | None = None,
+    *,
+    quick: bool = False,
+) -> tuple[Path, Path]:
+    """Resolve the ``(results, models)`` directories a CLI run should write to.
+
+    An explicit path always wins.  A ``--quick`` smoke run otherwise lands in the sandboxed
+    ``results/quick`` and ``models/quick`` so that tiny-budget numbers can never overwrite
+    the published artefacts.
+    """
+    results_default = RESULTS_DIR / "quick" if quick else RESULTS_DIR
+    models_default = MODELS_DIR / "quick" if quick else MODELS_DIR
+    return (
+        Path(out_dir) if out_dir is not None else results_default,
+        Path(models_dir) if models_dir is not None else models_default,
+    )
+
+
 def _default(o: Any):
     import numpy as np
 

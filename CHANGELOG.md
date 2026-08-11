@@ -7,6 +7,10 @@ All notable changes to this project are documented in this file. The format is b
 ## [Unreleased]
 
 ### Added
+- Sandboxed smoke runs: `rlx-experiments` and `rlx-multiseed` gain `--out-dir` / `--models-dir`,
+  and `--quick` defaults them to `results/quick/` and `models/quick/` (figures follow the results
+  directory), so a tiny-budget smoke run can no longer overwrite published results, models or
+  figures. Both directories are gitignored.
 - Brownian-motion price dynamics:
   - `rl_execution.envs.brownian`: named RNG **substreams** (`Stream` / `NoiseStreams`, spawned
     from one seed via `SeedSequence`), Wiener increments (`BrownianEngine`), the **Brownian
@@ -83,6 +87,9 @@ All notable changes to this project are documented in this file. The format is b
   issue/PR templates.
 
 ### Changed
+- `MarketConfig` now coerces every field to its declared type at construction and raises
+  `ValueError` on junk. A YAML typo such as `imbalance_ou_scaling: false# oops` previously
+  reached validation as a truthy *string*, silently switching a setting on for a whole run.
 - Replaced the blanket `warnings.filterwarnings("ignore")` in the command-line tools with a
   scoped helper that silences only known third-party warning noise.
 

@@ -35,6 +35,8 @@ against the classical execution strategies used on real trading desks.
 pip install -r requirements.txt          # or: pip install -e ".[rl,dashboard,dev]"
 
 # 2. fast end-to-end smoke run (trains tiny agents, evaluates, makes figures)
+#    --quick is sandboxed: it writes to results/quick/ and models/quick/, never over the
+#    published artefacts. Use --out-dir / --models-dir to choose your own destination.
 python scripts/run_experiments.py --quick
 
 # 3. full run (trains all 5 agents with domain randomisation, evaluates across regimes)
