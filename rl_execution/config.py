@@ -9,7 +9,65 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
+
+_TRUE_TOKENS = {"true", "yes", "1"}
+_FALSE_TOKENS = {"false", "no", "0"}
+
+
+def _as_float(value: Any, name: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name}: expected a number, got {value!r}") from exc
+
+
+def _as_int(value: Any, name: str) -> int:
+    as_float = _as_float(value, name)
+    if as_float != int(as_float):
+        raise ValueError(f"{name}: expected an integer, got {value!r}")
+    return int(as_float)
+
+
+def _as_bool(value: Any, name: str) -> bool:
+    """Accept real booleans and the YAML boolean spellings -- and nothing else.
+
+    A bare ``bool(value)`` would happily take the string ``'false# oops'`` (a missing
+    space before a YAML comment) as ``True`` and silently invalidate a whole run.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in _TRUE_TOKENS:
+            return True
+        if token in _FALSE_TOKENS:
+            return False
+        raise ValueError(f"{name}: expected a boolean, got {value!r}")
+    try:  # numpy bools and plain 0 / 1
+        as_int = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name}: expected a boolean, got {value!r}") from exc
+    if as_int in (0, 1) and value == as_int:
+        return bool(as_int)
+    raise ValueError(f"{name}: expected a boolean, got {value!r}")
+
+
+def _as_token(value: Any, name: str) -> str:
+    """Normalise an enum-like string so surrounding whitespace / case is not a failure."""
+    if not isinstance(value, str):
+        raise ValueError(f"{name}: expected a string, got {value!r}")
+    return value.strip().lower()
+
+
+#: Coercion by declared field type.  ``from __future__ import annotations`` makes every
+#: annotation a string, so a new field is covered the moment it is declared.
+_COERCERS: Dict[str, Callable[[Any, str], Any]] = {
+    "float": _as_float,
+    "int": _as_int,
+    "bool": _as_bool,
+    "str": _as_token,
+}
 
 
 class Side(str, Enum):
@@ -87,6 +145,21 @@ class MarketConfig:
     base_market_volume: float = 2000.0  # ~shares traded by the rest of the market per step
     volume_vol: float = 0.35  # relative log-noise on market volume
     volume_u_shape: float = 0.5  # intraday U-shape strength (higher at open/close)
+
+    def __post_init__(self) -> None:
+        """Coerce every field to its declared type, rejecting junk at construction.
+
+        Without this a YAML typo reaches :meth:`RunConfig.validate` as a *string* --
+        ``imbalance_ou_scaling: false# oops`` is truthy, passes every membership check
+        and silently switches the stationary imbalance scaling on.  Range and membership
+        checks stay in :meth:`RunConfig._validate_manual`; this is only about types.
+        """
+        for f in fields(self):
+            # a string under PEP 563, a real type if some caller evaluates the annotations
+            annotation = f.type if isinstance(f.type, str) else getattr(f.type, "__name__", "")
+            coerce = _COERCERS.get(annotation)
+            if coerce is not None:
+                setattr(self, f.name, coerce(getattr(self, f.name), f.name))
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
