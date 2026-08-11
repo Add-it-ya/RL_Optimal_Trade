@@ -190,7 +190,11 @@ def plot_is_distribution(results: Dict[str, "object"], save: Optional[str] = Non
             data.append(df["implementation_shortfall_bps"].to_numpy())
             labels.append(name)
     fig, ax = plt.subplots(figsize=(9, 5))
-    ax.boxplot(data, labels=labels, showfliers=False)
+    # Not labels=/tick_labels=: the former was removed in matplotlib 3.11, the
+    # latter only exists from 3.9, and the floor here is 3.7. Boxes sit at 1..n.
+    ax.boxplot(data, showfliers=False)
+    ax.set_xticks(range(1, len(labels) + 1))
+    ax.set_xticklabels(labels)
     ax.set_ylabel("Implementation shortfall (bps)")
     ax.set_title("Per-episode IS distribution (lower is better)")
     plt.xticks(rotation=30, ha="right")
