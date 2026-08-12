@@ -7,6 +7,41 @@ All notable changes to this project are documented in this file. The format is b
 ## [Unreleased]
 
 ### Added
+- Sandboxed smoke runs: `rlx-experiments` and `rlx-multiseed` gain `--out-dir` / `--models-dir`,
+  and `--quick` defaults them to `results/quick/` and `models/quick/` (figures follow the results
+  directory), so a tiny-budget smoke run can no longer overwrite published results, models or
+  figures. Both directories are gitignored.
+- Brownian-motion price dynamics:
+  - `rl_execution.envs.brownian`: named RNG **substreams** (`Stream` / `NoiseStreams`, spawned
+    from one seed via `SeedSequence`), Wiener increments (`BrownianEngine`), the **Brownian
+    bridge** (`bridge_value`, `BrownianEngine.bridge` / `.refine`), Cholesky-correlated normals
+    and a choice of ziggurat or **inverse-CDF** normal generation (monotone in the uniform, so
+    antithetic pairing is exact and QMC constructions are possible).
+  - `rl_execution.envs.processes`: explicit SDEs with **exact** discretisations — arithmetic
+    Brownian motion (`abm`), geometric Brownian motion (`gbm`, with the Itô correction the old
+    `S*(1+r)` update omitted), Ornstein-Uhlenbeck (`ou`), plus an **exp-OU stochastic
+    volatility** producing genuine volatility clustering and a **leverage** correlation
+    between the price and volatility Brownians.
+  - The whole exogenous market (price, volatility, imbalance, spread, volume, per-level depth)
+    is now drawn at `reset()` under a Brownian process, with permanent impact applied as an
+    additive overlay. Agent actions can no longer consume randomness that perturbs the market,
+    so `compare_strategies` / `paired_is_table` are genuine common random numbers.
+  - `latency_model="bridge"` prices a delayed fill on the Brownian bridge between the two
+    decision steps (unbiased) instead of the always-adverse folded normal; the deviation is
+    now transient in both the synthetic and historical simulators.
+  - `evaluate(antithetic=True)` pairs each seed with its `Z -> -Z` twin; `paired_bootstrap_ci`
+    and `paired_is_table` gain `block=` so dependent pairs are resampled as blocks.
+  - New regimes `abm_ac_optimal`, `gbm_medium`, `clustered_vol`, `leverage`, and
+    `schedule_gap` / `schedule_gap_table` to measure how far a learned policy's schedule sits
+    from the closed-form Almgren-Chriss trajectory in the regime where it is provably optimal.
+  - `imbalance_ou_scaling=True` switches the latent imbalance to the stationary
+    `sqrt(1 - phi^2)` innovation; the historical `1 - phi` scaling made the realised factor
+    about 2.5x weaker than `imbalance_strength` / `imbalance_alpha` implied.
+  - `scripts/brownian_demo.py` plus `plot_brownian_paths`, `plot_return_qq` and `plot_vol_acf`.
+  - `MarketConfig` gains `price_process`, `dt`, `rng_mode`, `normal_method`, `vol_process`,
+    `vol_persistence`, `leverage_corr`, `imbalance_ou_scaling` and `latency_model`, all
+    range-validated. **All default to the legacy behaviour**, which is covered by a
+    bit-identity regression test, so existing results and configs are unaffected.
 - Statistical & research rigor:
   - `rl_execution.metrics.stats`: percentile **bootstrap CIs**, a **paired** bootstrap that
     preserves common-random-number pairing, Holm / Benjamini-Hochberg multiple-testing
@@ -52,6 +87,9 @@ All notable changes to this project are documented in this file. The format is b
   issue/PR templates.
 
 ### Changed
+- `MarketConfig` now coerces every field to its declared type at construction and raises
+  `ValueError` on junk. A YAML typo such as `imbalance_ou_scaling: false# oops` previously
+  reached validation as a truthy *string*, silently switching a setting on for a whole run.
 - Replaced the blanket `warnings.filterwarnings("ignore")` in the command-line tools with a
   scoped helper that silences only known third-party warning noise.
 

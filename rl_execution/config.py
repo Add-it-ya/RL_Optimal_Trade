@@ -9,7 +9,65 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
+
+_TRUE_TOKENS = {"true", "yes", "1"}
+_FALSE_TOKENS = {"false", "no", "0"}
+
+
+def _as_float(value: Any, name: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name}: expected a number, got {value!r}") from exc
+
+
+def _as_int(value: Any, name: str) -> int:
+    as_float = _as_float(value, name)
+    if as_float != int(as_float):
+        raise ValueError(f"{name}: expected an integer, got {value!r}")
+    return int(as_float)
+
+
+def _as_bool(value: Any, name: str) -> bool:
+    """Accept real booleans and the YAML boolean spellings -- and nothing else.
+
+    A bare ``bool(value)`` would happily take the string ``'false# oops'`` (a missing
+    space before a YAML comment) as ``True`` and silently invalidate a whole run.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in _TRUE_TOKENS:
+            return True
+        if token in _FALSE_TOKENS:
+            return False
+        raise ValueError(f"{name}: expected a boolean, got {value!r}")
+    try:  # numpy bools and plain 0 / 1
+        as_int = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name}: expected a boolean, got {value!r}") from exc
+    if as_int in (0, 1) and value == as_int:
+        return bool(as_int)
+    raise ValueError(f"{name}: expected a boolean, got {value!r}")
+
+
+def _as_token(value: Any, name: str) -> str:
+    """Normalise an enum-like string so surrounding whitespace / case is not a failure."""
+    if not isinstance(value, str):
+        raise ValueError(f"{name}: expected a string, got {value!r}")
+    return value.strip().lower()
+
+
+#: Coercion by declared field type.  ``from __future__ import annotations`` makes every
+#: annotation a string, so a new field is covered the moment it is declared.
+_COERCERS: Dict[str, Callable[[Any, str], Any]] = {
+    "float": _as_float,
+    "int": _as_int,
+    "bool": _as_bool,
+    "str": _as_token,
+}
 
 
 class Side(str, Enum):
@@ -59,11 +117,22 @@ class MarketConfig:
     level_growth: float = 0.15  # fractional depth increase per level into the book
     depth_vol: float = 0.25  # relative log-noise applied to resting size
 
-    # --- price dynamics (per step) ---
-    volatility: float = 0.02  # std of per-step mid return (fraction of price)
-    drift: float = 0.0  # per-step expected return (regime: +bull / -bear)
+    # --- price dynamics (per unit time; one step spans ``dt``) ---
+    volatility: float = 0.02  # std of the mid return per unit time (fraction of price)
+    drift: float = 0.0  # expected return per unit time (regime: +bull / -bear)
     mean_reversion: float = 0.0  # OU pull toward initial price (sideways regime)
-    vol_of_vol: float = 0.0  # stochastic-volatility log-noise on per-step sigma
+    vol_of_vol: float = 0.0  # stochastic-volatility log-noise on sigma
+
+    # --- Brownian-motion layer (see rl_execution.envs.processes) ---
+    price_process: str = "legacy"  # legacy | abm | gbm | ou
+    dt: float = 1.0  # time spanned by one decision step, in volatility units
+    rng_mode: str = "legacy"  # legacy (one shared stream) | streams (independent substreams)
+    normal_method: str = "ziggurat"  # ziggurat | inverse_cdf (monotone; needed for QMC)
+    vol_process: str = "iid_lognormal"  # none | iid_lognormal | expou (clustering)
+    vol_persistence: float = 0.0  # AR(1) persistence of ln(sigma) under 'expou'
+    leverage_corr: float = 0.0  # corr(dW_price, dW_vol); < 0 = vol rises as price falls
+    imbalance_ou_scaling: bool = False  # sqrt(1-phi^2) innovations => unit-variance imbalance
+    latency_model: str = "adverse"  # adverse (always costly) | bridge (unbiased Brownian bridge)
 
     # --- microstructure / impact ---
     permanent_impact: float = 5.0e-6  # mid shift per share executed (Kyle-lambda style)
@@ -76,6 +145,21 @@ class MarketConfig:
     base_market_volume: float = 2000.0  # ~shares traded by the rest of the market per step
     volume_vol: float = 0.35  # relative log-noise on market volume
     volume_u_shape: float = 0.5  # intraday U-shape strength (higher at open/close)
+
+    def __post_init__(self) -> None:
+        """Coerce every field to its declared type, rejecting junk at construction.
+
+        Without this a YAML typo reaches :meth:`RunConfig.validate` as a *string* --
+        ``imbalance_ou_scaling: false# oops`` is truthy, passes every membership check
+        and silently switches the stationary imbalance scaling on.  Range and membership
+        checks stay in :meth:`RunConfig._validate_manual`; this is only about types.
+        """
+        for f in fields(self):
+            # a string under PEP 563, a real type if some caller evaluates the annotations
+            annotation = f.type if isinstance(f.type, str) else getattr(f.type, "__name__", "")
+            coerce = _COERCERS.get(annotation)
+            if coerce is not None:
+                setattr(self, f.name, coerce(getattr(self, f.name), f.name))
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -254,6 +338,18 @@ class RunConfig:
             "initial_price > 0": m.initial_price > 0.0,
             "horizon > 0": e.horizon > 0,
             "total_inventory > 0": e.total_inventory > 0.0,
+            # --- Brownian layer ---
+            "price_process in {legacy, abm, gbm, ou}": m.price_process
+            in {"legacy", "abm", "gbm", "ou"},
+            "dt > 0": m.dt > 0.0,
+            "rng_mode in {legacy, streams}": m.rng_mode in {"legacy", "streams"},
+            "normal_method in {ziggurat, inverse_cdf}": m.normal_method
+            in {"ziggurat", "inverse_cdf"},
+            "vol_process in {none, iid_lognormal, expou}": m.vol_process
+            in {"none", "iid_lognormal", "expou"},
+            "0 <= vol_persistence < 1": 0.0 <= m.vol_persistence < 1.0,
+            "-1 <= leverage_corr <= 1": -1.0 <= m.leverage_corr <= 1.0,
+            "latency_model in {adverse, bridge}": m.latency_model in {"adverse", "bridge"},
         }
         failed = [name for name, ok in checks.items() if not ok]
         if failed:

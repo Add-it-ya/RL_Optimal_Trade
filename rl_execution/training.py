@@ -116,11 +116,20 @@ def train_agent(
 
 
 # --------------------------------------------------------------------------- persistence
-def model_artifact_path(agent_name: str, tag: Optional[str] = None) -> Path:
+def _models_dir(models_dir: Optional[Union[str, Path]]) -> Path:
+    """Resolve a models directory, defaulting to ``MODELS_DIR`` *at call time*."""
+    return Path(models_dir) if models_dir is not None else MODELS_DIR
+
+
+def model_artifact_path(
+    agent_name: str,
+    tag: Optional[str] = None,
+    models_dir: Optional[Union[str, Path]] = None,
+) -> Path:
     """The on-disk model file (with extension) that :func:`save_agent` writes for an agent."""
     tag = tag or _norm(agent_name)
     ext = ".pt" if _norm(agent_name) in _CUSTOM else ".zip"
-    return MODELS_DIR / f"{tag}{ext}"
+    return _models_dir(models_dir) / f"{tag}{ext}"
 
 
 def save_agent(
@@ -132,19 +141,23 @@ def save_agent(
     seed: Optional[int] = None,
     config: Any = None,
     provenance: bool = True,
+    models_dir: Optional[Union[str, Path]] = None,
 ) -> str:
     """Persist a trained agent and a JSON sidecar; returns the model path (without ext).
 
     When ``provenance`` is true the sidecar is stamped with a lineage block
     ({git_sha, config_hash, lib_versions, seed, ...}) so the artifact is self-describing
     and auditable.  ``config`` (e.g. a :class:`RunConfig`) is hashed into ``config_hash``.
+    ``models_dir`` defaults to the project ``models/`` directory; pass it to keep a smoke
+    run out of the published artefacts.
     """
-    ensure_dir(MODELS_DIR)
+    root = _models_dir(models_dir)
+    ensure_dir(root)
     tag = tag or _norm(agent_name)
     backend = "custom" if _norm(agent_name) in _CUSTOM else "sb3"
     ext = ".pt" if backend == "custom" else ".zip"
-    model_path = str(MODELS_DIR / f"{tag}{ext}")
-    agent.save(model_path if backend == "custom" else str(MODELS_DIR / tag))
+    model_path = str(root / f"{tag}{ext}")
+    agent.save(model_path if backend == "custom" else str(root / tag))
 
     sidecar: Dict[str, Any] = {
         "agent_name": agent_name,
@@ -156,17 +169,17 @@ def save_agent(
         sidecar.update(meta)
     if provenance:
         sidecar["provenance"] = capture_provenance(seed=seed, config=config)
-    save_json(sidecar, str(MODELS_DIR / f"{tag}.json"))
-    return str(MODELS_DIR / tag)
+    save_json(sidecar, str(root / f"{tag}.json"))
+    return str(root / tag)
 
 
-def load_agent(tag: str, env, models_dir: Union[str, Path] = MODELS_DIR) -> Any:
+def load_agent(tag: str, env, models_dir: Optional[Union[str, Path]] = None) -> Any:
     """Rebuild a saved agent bound to ``env`` from its JSON sidecar.
 
     ``models_dir`` defaults to the project ``models/`` directory but can point elsewhere
     (e.g. a temp dir produced by the model registry's ``load_registered``).
     """
-    models_dir = Path(models_dir)
+    models_dir = _models_dir(models_dir)
     meta = load_json(str(models_dir / f"{tag}.json"))
     backend = meta["backend"]
     if backend == "custom":

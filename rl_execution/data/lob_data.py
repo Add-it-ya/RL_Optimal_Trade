@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 from rl_execution.config import MarketConfig, Side
+from rl_execution.envs.brownian import bridge_value
 from rl_execution.envs.lob import LOBSnapshot
 from rl_execution.envs.market import ExecutionResult
 
@@ -59,10 +60,10 @@ def synthetic_lob_dataframe(
         L = min(levels, len(snap.bid_prices))
         row = {"mid": snap.mid, "spread": snap.spread, "volume": sim.market_volume}
         for i in range(L):
-            row[f"bid_px_{i+1}"] = snap.bid_prices[i]
-            row[f"bid_sz_{i+1}"] = snap.bid_sizes[i]
-            row[f"ask_px_{i+1}"] = snap.ask_prices[i]
-            row[f"ask_sz_{i+1}"] = snap.ask_sizes[i]
+            row[f"bid_px_{i+1}"] = float(snap.bid_prices[i])
+            row[f"bid_sz_{i+1}"] = float(snap.bid_sizes[i])
+            row[f"ask_px_{i+1}"] = float(snap.ask_prices[i])
+            row[f"ask_sz_{i+1}"] = float(snap.ask_sizes[i])
         rows.append(row)
         sim.advance()
     return pd.DataFrame(rows, columns=standard_columns(levels))
@@ -171,6 +172,7 @@ class HistoricalMarketSimulator:
         self.start = int(self.rng.integers(0, max_start))
         self.t = 0
         self.shift = 0.0
+        self._latency_dev = 0.0
         self._refresh()
         return self.snapshot
 
@@ -178,15 +180,21 @@ class HistoricalMarketSimulator:
     def idx(self) -> int:
         return min(self.start + self.t, self.source.n - 1)
 
+    @property
+    def _offset(self) -> float:
+        """Total price offset applied to the historical ladder: impact plus latency drift."""
+        return float(self.shift + self._latency_dev)
+
     def _refresh(self) -> None:
         i = self.idx
         s = self.source
-        self.mid = float(s.mid[i] + self.shift)
+        off = self._offset
+        self.mid = float(s.mid[i] + off)
         self.market_volume = float(s.volume[i])
         self.snapshot = LOBSnapshot(
-            bid_prices=s.bid_px[i] + self.shift,
+            bid_prices=s.bid_px[i] + off,
             bid_sizes=s.bid_sz[i],
-            ask_prices=s.ask_px[i] + self.shift,
+            ask_prices=s.ask_px[i] + off,
             ask_sizes=s.ask_sz[i],
             mid=self.mid,
         )
@@ -237,14 +245,37 @@ class HistoricalMarketSimulator:
 
     def advance(self) -> LOBSnapshot:
         self.t += 1
+        self._latency_dev = 0.0  # an intra-step latency deviation does not persist
         self._refresh()
         return self.snapshot
 
     def apply_latency(self, side: Side, latency_steps: float) -> float:
+        """Move the mid to where a delayed order actually arrives (see
+        :meth:`~rl_execution.envs.market.MarketSimulator.apply_latency`).
+
+        ``latency_model='bridge'`` interpolates between the *recorded* prices at this and the
+        next snapshot with Brownian-bridge noise, so the deviation is unbiased and bounded by
+        what the tape actually did.  The default ``'adverse'`` model charges a folded-normal
+        slip against the trader.  Either way the deviation is transient: :meth:`advance`
+        clears it, leaving only permanent impact in ``shift``.
+        """
         if latency_steps <= 0:
             return 0.0
+        before = self.mid
         sigma = self.recent_volatility()
-        magnitude = self.mid * sigma * np.sqrt(latency_steps) * abs(self.rng.normal())
-        self.shift -= side.sign * magnitude
+
+        if str(getattr(self.config, "latency_model", "adverse")) == "bridge":
+            s, i = self.source, self.idx
+            nxt = min(i + 1, s.n - 1)
+            delta = float(np.clip(latency_steps, 0.0, 1.0))
+            var = (sigma * max(self.mid, self.config.tick_size)) ** 2
+            bridged = bridge_value(
+                float(s.mid[i]), float(s.mid[nxt]), delta, var, float(self.rng.standard_normal())
+            )
+            self._latency_dev = bridged - float(s.mid[i])
+        else:
+            magnitude = self.mid * sigma * np.sqrt(latency_steps) * abs(self.rng.normal())
+            self._latency_dev -= side.sign * magnitude
+
         self._refresh()
-        return -side.sign * magnitude
+        return float(self.mid - before)

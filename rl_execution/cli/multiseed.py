@@ -20,7 +20,7 @@ import pandas as pd
 from rl_execution.config import ExecutionConfig, RunConfig, Side
 from rl_execution.experiments import list_regimes, run_multiseed
 from rl_execution.tracking import get_tracker
-from rl_execution.utils.io import RESULTS_DIR, ensure_dir
+from rl_execution.utils.io import ensure_dir, resolve_artifact_dirs
 from rl_execution.utils.provenance import git_sha
 from rl_execution.utils.seeding import set_global_seeds
 from rl_execution.utils.warnings import configure_cli_warnings
@@ -41,6 +41,16 @@ def parse_args():
     p.add_argument("--n-jobs", type=int, default=1, help="parallel seeds (joblib); 1 = serial")
     p.add_argument("--no-register", action="store_true", help="skip registry caching of seeds")
     p.add_argument("--quick", action="store_true", help="tiny budget / few seeds for a smoke run")
+    p.add_argument(
+        "--out-dir",
+        default=None,
+        help="where to write the CSVs (default: results/, or results/quick/ under --quick)",
+    )
+    p.add_argument(
+        "--models-dir",
+        default=None,
+        help="where to write per-seed models (default: models/, or models/quick/ under --quick)",
+    )
     p.add_argument("--tracker", default="auto", choices=["auto", "mlflow", "wandb", "null"])
     p.add_argument("--experiment", default="rl-execution")
     return p.parse_args()
@@ -58,7 +68,11 @@ def main():  # pragma: no cover - trains agents end-to-end; exercised only in fu
     exec_config = ExecutionConfig(
         total_inventory=args.inventory, horizon=args.horizon, side=Side(args.side)
     )
-    ensure_dir(RESULTS_DIR)
+    # A --quick smoke run is sandboxed under results/quick and models/quick by default.
+    results_dir, models_dir = resolve_artifact_dirs(args.out_dir, args.models_dir, quick=args.quick)
+    ensure_dir(results_dir)
+    ensure_dir(models_dir)
+    print(f"Writing results -> {results_dir}  models -> {models_dir}")
 
     tracker = get_tracker(args.tracker, experiment=args.experiment)
     tracker.start_run(
@@ -69,6 +83,8 @@ def main():  # pragma: no cover - trains agents end-to-end; exercised only in fu
             "regimes": regimes,
             "timesteps": args.timesteps,
             "episodes": args.episodes,
+            "out_dir": str(results_dir),
+            "models_dir": str(models_dir),
         },
         tags={"git_sha": git_sha(), "seeds": ",".join(map(str, args.seeds))},
     )
@@ -96,24 +112,25 @@ def main():  # pragma: no cover - trains agents end-to-end; exercised only in fu
             episodes=args.episodes,
             register=not args.no_register,
             n_jobs=args.n_jobs,
+            models_dir=models_dir,
         )
         across_frames.append(result.across_seed_frame())
         within_frames.append(result.within_run_frame())
 
     across = pd.concat(across_frames, ignore_index=True)
     within = pd.concat(within_frames, ignore_index=True)
-    across.to_csv(RESULTS_DIR / "multiseed_across_seed.csv", index=False)
-    within.to_csv(RESULTS_DIR / "multiseed_within_run.csv", index=False)
+    across.to_csv(results_dir / "multiseed_across_seed.csv", index=False)
+    within.to_csv(results_dir / "multiseed_within_run.csv", index=False)
 
     print(f"\nAcross-seed (headline) vs {args.benchmark}:")
     print(across.round(2).to_string(index=False))
     for art in (
-        RESULTS_DIR / "multiseed_across_seed.csv",
-        RESULTS_DIR / "multiseed_within_run.csv",
+        results_dir / "multiseed_across_seed.csv",
+        results_dir / "multiseed_within_run.csv",
     ):
         tracker.log_artifact(str(art))
     tracker.finish("ok")
-    print("\nSaved -> results/multiseed_across_seed.csv. Next: rlx-report")
+    print(f"\nSaved -> {results_dir / 'multiseed_across_seed.csv'}. Next: rlx-report")
 
 
 if __name__ == "__main__":

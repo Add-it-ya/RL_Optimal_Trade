@@ -16,6 +16,7 @@ against the classical execution strategies used on real trading desks.
 | Area | What's included |
 |------|-----------------|
 | **Environment** | Custom **Gymnasium** env over a simulated **limit order book** (depth ladder, spread & imbalance dynamics, convex book-walk slippage). State = inventory, time, mid-return, spread, volatility, imbalance, depth, previous action. |
+| **Price dynamics** | Explicit **Brownian-motion** processes with exact discretisations — **arithmetic** BM (the Almgren-Chriss world), **geometric** BM, **Ornstein-Uhlenbeck**, plus **exp-OU stochastic volatility** with clustering and a **leverage** correlation. Named RNG substreams, **Brownian-bridge** latency fills and **antithetic** variates. |
 | **Actions** | **Discrete** grid *and* **continuous** Box — fraction of remaining inventory to trade. |
 | **Reward** | Negative implementation-shortfall contribution (slippage + spread + **temporary impact**), **permanent impact**, transaction costs, **inventory-risk** penalty, unexecuted-inventory penalty. |
 | **Baselines** | **TWAP, VWAP, POV, Random, Almgren-Chriss** (closed-form risk-averse optimal). |
@@ -34,6 +35,8 @@ against the classical execution strategies used on real trading desks.
 pip install -r requirements.txt          # or: pip install -e ".[rl,dashboard,dev]"
 
 # 2. fast end-to-end smoke run (trains tiny agents, evaluates, makes figures)
+#    --quick is sandboxed: it writes to results/quick/ and models/quick/, never over the
+#    published artefacts. Use --out-dir / --models-dir to choose your own destination.
 python scripts/run_experiments.py --quick
 
 # 3. full run (trains all 5 agents with domain randomisation, evaluates across regimes)
@@ -73,6 +76,8 @@ print(results_table(results))
 rl_execution/
 ├── config.py             # MarketConfig / ExecutionConfig / RewardConfig
 ├── envs/
+│   ├── brownian.py       # RNG substreams, Wiener increments, Brownian bridge, antithetics
+│   ├── processes.py      # ABM / GBM / OU price processes + exp-OU stochastic volatility
 │   ├── lob.py            # order-book snapshot + market-order book-walking
 │   ├── market.py         # stochastic market simulator + impact model
 │   ├── execution_env.py  # the Gymnasium environment
@@ -86,7 +91,7 @@ rl_execution/
 ├── viz/                  # plotting (inventory decay, schedules, costs, heatmaps, …)
 ├── utils/                # paths, IO, YAML config
 └── training.py           # train / save / load helpers
-scripts/    train.py · evaluate.py · run_experiments.py · make_report.py
+scripts/    train.py · evaluate.py · run_experiments.py · make_report.py · brownian_demo.py
 dashboard/  app.py        # Streamlit performance dashboard
 config/     default.yaml
 tests/      pytest suite
@@ -106,6 +111,52 @@ Drift magnitudes are deliberately kept small relative to per-step volatility so 
 
 Implementation shortfall and execution cost are reported in **basis points of arrival
 notional**, signed so **lower = better** for both buy and sell orders.
+
+---
+
+## 🌊 Brownian price dynamics
+
+`MarketConfig.price_process` selects how the mid-price moves. `legacy` (the default) is the
+original inline multiplicative walk and is kept bit-for-bit reproducible; the other options
+are explicit SDEs with **exact** discretisations:
+
+| Process | SDE | Exact step |
+|---|---|---|
+| `abm` | `dS = mu S0 dt + sigma S0 dW` | `S + mu S0 dt + sigma S0 sqrt(dt) Z` |
+| `gbm` | `dS = mu S dt + sigma S dW` | `S exp((mu - sigma^2/2) dt + sigma sqrt(dt) Z)` |
+| `ou`  | `dS = kappa (S0 - S) dt + sigma S0 dW` | mean-reverting, stationary variance preserved |
+
+Layered on top: `vol_process="expou"` gives an exponential-OU log-volatility with genuine
+**clustering** (so the env's `volatility` feature carries forecast value), `leverage_corr < 0`
+makes volatility rise after the price falls, and `latency_model="bridge"` prices a delayed
+fill on the **Brownian bridge** between the two decision steps instead of charging an
+always-adverse folded normal.
+
+Two properties matter beyond realism:
+
+* **Common random numbers actually hold.** The whole exogenous market — price, volatility,
+  imbalance, spread, volume, per-level depth — is drawn at `reset()`, and market impact is
+  an additive overlay. Under `legacy`, trading re-quotes the book and consumes the random
+  draws that would have driven the price, so two strategies on one seed drift onto different
+  paths; under a Brownian process they face bit-identical markets, which is what makes
+  `paired_is_table` a real variance reduction.
+* **Ground truth for the learner.** Under `abm` with no alpha and linear impact the
+  closed-form **Almgren-Chriss** schedule is provably optimal, so the `abm_ac_optimal` regime
+  turns "did the agent solve the problem?" into a measurable schedule distance
+  (`schedule_gap_table`) rather than another cost comparison.
+
+```bash
+python scripts/brownian_demo.py          # paths, QQ-plot, vol clustering, quadratic variation
+```
+
+```python
+from rl_execution.backtest import compare_strategies, paired_is_table
+from rl_execution.experiments.regimes import get_regime
+
+cfg = get_regime("clustered_vol")                  # gbm + exp-OU volatility clustering
+results = compare_strategies(factory, strategies, n_episodes=200, antithetic=True)
+paired_is_table(results, block=2)                  # block=2: antithetic pairs are dependent
+```
 
 ---
 

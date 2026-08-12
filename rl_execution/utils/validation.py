@@ -25,6 +25,15 @@ def validate_run_config(d: Dict[str, Any]) -> None:
         volatility: float = Field(ge=0)
         imbalance_alpha: float = Field(ge=0, le=1)
         imbalance_persistence: float = Field(ge=0, lt=1)
+        # --- Brownian layer ---
+        price_process: Literal["legacy", "abm", "gbm", "ou"] = "legacy"
+        dt: float = Field(default=1.0, gt=0)
+        rng_mode: Literal["legacy", "streams"] = "legacy"
+        normal_method: Literal["ziggurat", "inverse_cdf"] = "ziggurat"
+        vol_process: Literal["none", "iid_lognormal", "expou"] = "iid_lognormal"
+        vol_persistence: float = Field(default=0.0, ge=0, lt=1)
+        leverage_corr: float = Field(default=0.0, ge=-1, le=1)
+        latency_model: Literal["adverse", "bridge"] = "adverse"
 
     class _Execution(BaseModel):
         model_config = ConfigDict(extra="allow")

@@ -10,6 +10,7 @@ slippage and temporary market impact.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -84,7 +85,9 @@ def build_book(
     spread: float,
     config: MarketConfig,
     imbalance_factor: float,
-    rng: np.random.Generator,
+    rng: Optional[np.random.Generator] = None,
+    *,
+    noise: Optional[Tuple[np.ndarray, np.ndarray]] = None,
 ) -> LOBSnapshot:
     """Generate a fresh order-book snapshot around ``mid``.
 
@@ -97,6 +100,14 @@ def build_book(
     imbalance_factor:
         Latent factor in roughly [-1, 1]; positive skews resting depth toward the bid
         (buy pressure), negative toward the ask.  Drives the observable imbalance feature.
+    rng:
+        Generator used to draw the per-level depth noise.  Ignored when ``noise`` is given.
+    noise:
+        Optional ``(bid_multipliers, ask_multipliers)`` already drawn by the caller.  The
+        path-based simulator pre-draws these once per step so that re-quoting the book after
+        a trade reuses the *same* liquidity realisation instead of re-randomising it -- which
+        is both more realistic and what keeps the agent's actions from consuming randomness
+        that would otherwise alter the market path.
     """
     tick = config.tick_size
     n = config.n_levels
@@ -112,8 +123,13 @@ def build_book(
 
     # depth grows away from the touch; multiplicative log-noise per level
     growth = (1.0 + config.level_growth) ** level_idx
-    bid_noise = np.exp(rng.normal(0.0, config.depth_vol, size=n))
-    ask_noise = np.exp(rng.normal(0.0, config.depth_vol, size=n))
+    if noise is not None:
+        bid_noise, ask_noise = np.asarray(noise[0], dtype=float), np.asarray(noise[1], dtype=float)
+    elif rng is not None:
+        bid_noise = np.exp(rng.normal(0.0, config.depth_vol, size=n))
+        ask_noise = np.exp(rng.normal(0.0, config.depth_vol, size=n))
+    else:
+        raise ValueError("build_book requires either an rng or pre-drawn depth noise.")
 
     # imbalance skews the two sides in opposite directions
     skew = config.imbalance_strength * float(np.clip(imbalance_factor, -1.0, 1.0))

@@ -69,12 +69,13 @@ def _stack_mean(arrays: List[np.ndarray]) -> np.ndarray:
     return stacked.mean(axis=0)
 
 
-def run_episode(env, strategy, seed: Optional[int] = None):
+def run_episode(env, strategy, seed: Optional[int] = None, options: Optional[Dict] = None):
     """Run a single episode of ``strategy`` on ``env``.
 
-    Returns ``(summary, history_df, rewards, price_path)``.
+    ``options`` is forwarded to ``env.reset`` (used to request the antithetic twin of a
+    seed).  Returns ``(summary, history_df, rewards, price_path)``.
     """
-    obs, info = env.reset(seed=seed)
+    obs, info = env.reset(seed=seed, options=options)
     strategy.reset(env)
     rewards: List[float] = []
     price_path: List[float] = [env.market.mid]
@@ -99,12 +100,21 @@ def evaluate(
     base_seed: int = 0,
     name: Optional[str] = None,
     progress: bool = False,
+    antithetic: bool = False,
 ) -> BacktestResult:
     """Evaluate one strategy over ``n_episodes`` randomised episodes.
 
     ``env_factory`` is a zero-arg callable returning a fresh :class:`ExecutionEnv`; the
     same factory is reused so the environment configuration is held fixed while the random
     seed is varied per episode.
+
+    With ``antithetic=True`` episodes are emitted in pairs: ``2k`` uses seed
+    ``base_seed + k`` and ``2k + 1`` reuses that seed with every normal draw negated
+    (``Z -> -Z``).  Because execution cost is close to monotone in the price path, the two
+    halves of a pair have strongly negative error correlation and their average is a
+    lower-variance estimate than two independent draws.  It requires a Brownian price
+    process (``MarketConfig.price_process`` other than ``'legacy'``); the resulting episodes
+    are dependent within a pair, so downstream statistics must use ``block=2``.
     """
     env = env_factory()
     name = name or getattr(strategy, "name", strategy.__class__.__name__)
@@ -120,8 +130,11 @@ def evaluate(
             pass
 
     for i in iterator:
-        seed = base_seed + i
-        summary, history, rewards, price_path = run_episode(env, strategy, seed=seed)
+        seed = base_seed + (i // 2 if antithetic else i)
+        options = {"antithetic": bool(i % 2)} if antithetic else None
+        summary, history, rewards, price_path = run_episode(
+            env, strategy, seed=seed, options=options
+        )
         result.summaries.append(summary)
         result.episode_metrics.append(compute_episode_metrics(summary, history))
 
@@ -142,8 +155,16 @@ def compare_strategies(
     n_episodes: int = 100,
     base_seed: int = 0,
     progress: bool = True,
+    antithetic: bool = False,
 ) -> Dict[str, BacktestResult]:
-    """Evaluate several strategies on the *same* sequence of episodes (paired seeds)."""
+    """Evaluate several strategies on the *same* sequence of episodes (paired seeds).
+
+    Under a Brownian price process the seed fixes the entire exogenous market before the
+    agent acts, so "same sequence of episodes" means the strategies face bit-identical
+    price, spread, depth and volume paths -- true common random numbers.  Under the legacy
+    process a strategy's own trades consume randomness, so the paths decouple after the
+    first differing action and the pairing is only approximate.
+    """
     results: Dict[str, BacktestResult] = {}
     for name, strat in strategies.items():
         results[name] = evaluate(
@@ -153,6 +174,7 @@ def compare_strategies(
             base_seed=base_seed,
             name=name,
             progress=progress,
+            antithetic=antithetic,
         )
     return results
 
@@ -169,9 +191,16 @@ def episode_is(res: BacktestResult) -> np.ndarray:
     return np.array([m["implementation_shortfall_bps"] for m in res.episode_metrics], dtype=float)
 
 
-def _paired_pvalue(diff: np.ndarray) -> float:
-    """Two-sided p-value of a paired difference series (paired t-test on the differences)."""
+def _paired_pvalue(diff: np.ndarray, block: int = 1) -> float:
+    """Two-sided p-value of a paired difference series (paired t-test on the differences).
+
+    ``block > 1`` first averages within contiguous blocks, so dependent episodes (antithetic
+    pairs) contribute one independent observation each instead of ``block`` correlated ones.
+    """
     d = np.asarray(diff, dtype=float)
+    block = max(int(block), 1)
+    if block > 1 and d.size // block >= 2:
+        d = d[: (d.size // block) * block].reshape(-1, block).mean(axis=1)
     if d.size < 2:
         return float("nan")
     if float(d.std(ddof=1)) == 0.0:
@@ -191,6 +220,7 @@ def paired_is_table(
     n_boot: int = 2_000,
     alpha: float = 0.05,
     rng: Any = 0,
+    block: int = 1,
 ) -> pd.DataFrame:
     """Paired comparison of implementation shortfall against a benchmark strategy.
 
@@ -206,6 +236,8 @@ def paired_is_table(
     * ``p_value``                -- two-sided paired-t p-value of the improvement (when ``ci``).
 
     ``rng`` seeds the bootstrap so the interval columns are reproducible across runs.
+    ``block`` sets the bootstrap / t-test block length; pass ``block=2`` when the results
+    came from ``evaluate(antithetic=True)``, whose episodes are dependent within a pair.
     """
     from rl_execution.metrics.stats import paired_bootstrap_ci
 
@@ -235,14 +267,62 @@ def paired_is_table(
                 lo = hi = pval = float("nan")
             else:
                 lo, hi = paired_bootstrap_ci(
-                    arr[:n], bench[:n], n_boot=n_boot, alpha=alpha, rng=gen
+                    arr[:n], bench[:n], n_boot=n_boot, alpha=alpha, rng=gen, block=block
                 )
-                pval = _paired_pvalue(diff)
+                pval = _paired_pvalue(diff, block=block)
             row[f"vs_{benchmark}_ci_low"] = lo
             row[f"vs_{benchmark}_ci_high"] = hi
             row["p_value"] = pval
         rows.append(row)
     return pd.DataFrame(rows).set_index("strategy").sort_values("IS_bps")
+
+
+def _normalised_schedule(res: BacktestResult) -> np.ndarray:
+    """Mean execution schedule as per-step fractions of the parent order."""
+    sched = np.asarray(res.mean_schedule(), dtype=float)
+    if sched.size == 0:
+        return sched
+    total = float(res.summaries[0]["total_inventory"]) if res.summaries else 0.0
+    denom = total if total > 0 else float(sched.sum())
+    return sched / denom if denom > 0 else sched
+
+
+def schedule_gap(a: np.ndarray, b: np.ndarray) -> float:
+    """Total absolute difference between two normalised schedules (an L1 distance).
+
+    Zero means the two strategies trade the same shape; ``2.0`` is the maximum for two
+    disjoint schedules that each execute the whole order.
+    """
+    x, y = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    n = min(x.size, y.size)
+    if n == 0:
+        return float("nan")
+    return float(np.abs(x[:n] - y[:n]).sum())
+
+
+def schedule_gap_table(
+    results: Dict[str, BacktestResult], reference: str = "AlmgrenChriss"
+) -> pd.DataFrame:
+    """How far each strategy's average schedule sits from a reference schedule.
+
+    Intended for the ``abm_ac_optimal`` regime, where the price process is arithmetic
+    Brownian motion with no alpha and the closed-form Almgren-Chriss trajectory is provably
+    optimal.  A learned policy that has solved the problem should show a small
+    ``schedule_L1`` against it -- direct evidence about the learner rather than another
+    cost comparison.
+    """
+    if reference not in results:
+        raise KeyError(f"Reference strategy '{reference}' not in results.")
+    ref = _normalised_schedule(results[reference])
+    rows = [
+        {
+            "strategy": name,
+            "schedule_L1": schedule_gap(_normalised_schedule(res), ref),
+            "IS_bps": res.aggregate.get("implementation_shortfall_bps_mean", float("nan")),
+        }
+        for name, res in results.items()
+    ]
+    return pd.DataFrame(rows).set_index("strategy").sort_values("schedule_L1")
 
 
 def corrected_significance(

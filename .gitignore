@@ -27,6 +27,10 @@ results/*.pkl
 results/*.log
 reports/figures/*.png
 
+# Smoke-run sandbox (--quick writes here so it cannot touch the published artefacts)
+results/quick/
+models/quick/
+
 # Experiment tracking / model registry stores (local, regenerated)
 mlruns/
 mlartifacts/

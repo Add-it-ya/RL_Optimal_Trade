@@ -62,6 +62,9 @@ include = ["rl_execution*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "slow: end-to-end runs that train an agent (deselect with -m 'not slow')",
+]
 
 [tool.ruff]
 line-length = 100

@@ -25,6 +25,7 @@ import numpy as np
 from gymnasium import spaces
 
 from rl_execution.config import ActionType, ExecutionConfig, MarketConfig, Side
+from rl_execution.envs.brownian import make_streams
 from rl_execution.envs.market import MarketSimulator
 
 
@@ -117,11 +118,21 @@ class ExecutionEnv(gym.Env):
         # derive a fresh market RNG from the env's seeded RNG for reproducibility
         market_seed = int(self.np_random.integers(0, 2**31 - 1))
         rng = np.random.default_rng(market_seed)
+        # ``options={"antithetic": True}`` mirrors every normal draw (Z -> -Z).  Pairing a
+        # seed's ordinary episode with its antithetic twin is the variance-reduction trick
+        # used by ``evaluate(antithetic=True)``; it requires a Brownian price process.
+        antithetic = bool((options or {}).get("antithetic", False))
         if self.market_source is not None:
             # replay historical / real LOB data instead of the synthetic market
             self.market = self.market_source.make_simulator(rng)
         else:
-            self.market = MarketSimulator(self.market_config, rng=rng)
+            streams = make_streams(
+                rng,
+                self.market_config.rng_mode,
+                antithetic=antithetic,
+                method=self.market_config.normal_method,
+            )
+            self.market = MarketSimulator(self.market_config, rng=rng, streams=streams)
         assert self.market is not None
         self.market.reset(horizon=self.horizon)
 
