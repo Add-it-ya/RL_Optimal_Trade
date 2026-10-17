@@ -10,7 +10,6 @@ from rl_execution.envs.brownian import (
 from rl_execution.envs.execution_env import ExecutionEnv
 from rl_execution.envs.lob import Fill, LOBSnapshot, build_book, walk_book
 from rl_execution.envs.market import ExecutionResult, MarketSimulator
-from rl_execution.envs.multi_agent import MultiAgentSimulator, Participant
 from rl_execution.envs.processes import (
     ArithmeticBM,
     GeometricBM,
@@ -28,8 +27,6 @@ __all__ = [
     "MarketSimulator",
     "ExecutionResult",
     "ExecutionEnv",
-    "MultiAgentSimulator",
-    "Participant",
     # Brownian layer
     "Stream",
     "NoiseStreams",

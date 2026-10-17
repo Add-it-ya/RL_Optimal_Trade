@@ -50,18 +50,17 @@ class AlmgrenChriss(BaseStrategy):
         ``volatility * initial_price``, which makes the schedule genuinely optimal there.
         Under a geometric process the corresponding local volatility is ``volatility * S``,
         evaluated at the arrival price -- a first-order match rather than an exact one.
-        ``legacy`` keeps the historical convention unchanged.
         """
         cfg = self.env.market_config
-        sigma_rel = float(cfg.volatility) * np.sqrt(float(getattr(cfg, "dt", 1.0)))
-        if str(getattr(cfg, "price_process", "legacy")) == "gbm":
+        sigma_rel = float(cfg.volatility) * np.sqrt(float(cfg.dt))
+        if str(cfg.price_process) == "gbm":
             return sigma_rel * self._reference_price()
         return sigma_rel * float(cfg.initial_price)
 
     def _optimal_trades(self) -> np.ndarray:
         cfg = self.env.market_config
         N = self.horizon
-        tau = float(getattr(cfg, "dt", 1.0))
+        tau = float(cfg.dt)
         X = self.total
         eta = cfg.temporary_impact
         gamma = cfg.permanent_impact

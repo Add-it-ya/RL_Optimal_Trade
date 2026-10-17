@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Visual and numerical sanity checks for the Brownian-motion layer.
 
-Produces four figures in ``reports/figures/`` and prints the diagnostics behind them:
+Produces four figures in ``results/brownian_demo/`` and prints the diagnostics behind them:
 
 1. ``brownian_paths.png``  -- sample GBM price paths against the ``+/- sigma sqrt(t)`` envelope;
 2. ``brownian_qq.png``     -- normal QQ-plot of the simulated returns;
@@ -20,8 +20,10 @@ import numpy as np
 from rl_execution.config import MarketConfig
 from rl_execution.envs.brownian import BrownianEngine, NoiseStreams, normals
 from rl_execution.envs.processes import generate_market_paths, make_price_process
-from rl_execution.utils.io import FIGURES_DIR, ensure_dir
+from rl_execution.utils.io import RESULTS_DIR, ensure_dir
 from rl_execution.viz import plot_brownian_paths, plot_return_qq, plot_vol_acf, save_fig
+
+OUT_DIR = RESULTS_DIR / "brownian_demo"
 
 
 def _price_paths(cfg: MarketConfig, n_paths: int, n_steps: int, seed: int) -> np.ndarray:
@@ -40,8 +42,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
-    ensure_dir(FIGURES_DIR)
-    cfg = MarketConfig(price_process="gbm", rng_mode="streams", volatility=0.02, drift=0.0)
+    ensure_dir(OUT_DIR)
+    cfg = MarketConfig(price_process="gbm", volatility=0.02, drift=0.0)
 
     # ---------------------------------------------------------------- 1. paths + envelope
     paths = _price_paths(cfg, args.paths, args.steps, args.seed)
@@ -58,7 +60,7 @@ def main() -> None:
     print(f"  min price over all    : {paths.min():.4f}  (GBM is positive by construction)")
     save_fig(
         plot_brownian_paths(paths, cfg.volatility, cfg.initial_price),
-        f"{FIGURES_DIR}/brownian_paths.png",
+        f"{OUT_DIR}/brownian_paths.png",
     )
 
     # ---------------------------------------------------------------- 2. return normality
@@ -68,14 +70,13 @@ def main() -> None:
     print(f"  mean log-return       : {log_ret.mean():+.6f}")
     print(f"  Ito-corrected target  : {expected:+.6f}   (mu - sigma^2/2) dt")
     print(f"  skew / excess kurtosis: {_skew(log_ret):+.3f} / {_kurt(log_ret):+.3f}")
-    save_fig(plot_return_qq(log_ret[:200]), f"{FIGURES_DIR}/brownian_qq.png")
+    save_fig(plot_return_qq(log_ret[:200]), f"{OUT_DIR}/brownian_qq.png")
 
     # ---------------------------------------------------------------- 3. vol clustering
     n = 20_000
     clustered = generate_market_paths(
         MarketConfig(
             price_process="gbm",
-            rng_mode="streams",
             vol_process="expou",
             vol_of_vol=0.5,
             vol_persistence=0.9,
@@ -84,9 +85,7 @@ def main() -> None:
         NoiseStreams.from_seed(args.seed + 1),
     )
     flat = generate_market_paths(
-        MarketConfig(
-            price_process="gbm", rng_mode="streams", vol_process="iid_lognormal", vol_of_vol=0.5
-        ),
+        MarketConfig(price_process="gbm", vol_process="iid_lognormal", vol_of_vol=0.5),
         n,
         NoiseStreams.from_seed(args.seed + 1),
     )
@@ -97,7 +96,7 @@ def main() -> None:
         plot_vol_acf(
             {"exp-OU (clustering)": clustered.returns(), "i.i.d. lognormal": flat.returns()}
         ),
-        f"{FIGURES_DIR}/brownian_vol_acf.png",
+        f"{OUT_DIR}/brownian_vol_acf.png",
     )
 
     # ---------------------------------------------------------------- 4. quadratic variation
@@ -108,9 +107,7 @@ def main() -> None:
         print(f"  n = {steps:>6d} : QV = {qv:.5f}   |QV - T| = {abs(qv - 1.0):.5f}")
 
     # ---------------------------------------------------------------- 5. antithetic pair
-    twin_cfg = MarketConfig(
-        price_process="gbm", rng_mode="streams", vol_process="none", volatility=0.02, drift=0.0
-    )
+    twin_cfg = MarketConfig(price_process="gbm", vol_process="none", volatility=0.02, drift=0.0)
     plain = generate_market_paths(twin_cfg, args.steps, NoiseStreams.from_seed(7))
     twin = generate_market_paths(twin_cfg, args.steps, NoiseStreams.from_seed(7, antithetic=True))
     residual = np.abs(
@@ -124,10 +121,10 @@ def main() -> None:
         plot_brownian_paths(
             np.stack([plain.mid, twin.mid]), twin_cfg.volatility, twin_cfg.initial_price
         ),
-        f"{FIGURES_DIR}/brownian_antithetic.png",
+        f"{OUT_DIR}/brownian_antithetic.png",
     )
 
-    print(f"\nFigures written to {FIGURES_DIR}")
+    print(f"\nFigures written to {OUT_DIR}")
 
 
 def _acf1(x: np.ndarray) -> float:

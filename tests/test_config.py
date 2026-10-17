@@ -75,10 +75,8 @@ def test_numpy_scalars_become_python_floats():
     "field, value, expected",
     [
         ("price_process", " GBM ", "gbm"),
-        ("rng_mode", "Streams", "streams"),
         ("normal_method", "INVERSE_CDF", "inverse_cdf"),
         ("vol_process", " expou", "expou"),
-        ("latency_model", "Bridge ", "bridge"),
     ],
 )
 def test_enum_fields_are_case_and_whitespace_tolerant(field, value, expected):
@@ -95,7 +93,7 @@ def test_enum_fields_reject_non_strings():
 # =============================================================== nothing else moved
 def test_default_yaml_still_loads():
     market, execution = load_config("config/default.yaml")
-    assert market.price_process == "legacy"
+    assert market.price_process == "abm"
     assert market.imbalance_ou_scaling is False
     RunConfig(market=market, execution=execution).validate()
 

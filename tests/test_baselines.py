@@ -2,14 +2,7 @@ import numpy as np
 import pytest
 
 from rl_execution.backtest import run_episode
-from rl_execution.baselines import (
-    POV,
-    TWAP,
-    VWAP,
-    AlmgrenChriss,
-    RandomStrategy,
-    make_baseline,
-)
+from rl_execution.baselines import TWAP, VWAP, AlmgrenChriss, make_baseline
 from rl_execution.config import ExecutionConfig, MarketConfig
 from rl_execution.envs import ExecutionEnv
 
@@ -18,9 +11,7 @@ def make_env():
     return ExecutionEnv(MarketConfig(), ExecutionConfig(horizon=20))
 
 
-@pytest.mark.parametrize(
-    "strat", [TWAP(), VWAP(), POV(0.2), RandomStrategy(0), AlmgrenChriss(1e-7)]
-)
+@pytest.mark.parametrize("strat", [TWAP(), VWAP(), AlmgrenChriss(1e-7)])
 def test_baseline_executes_full_inventory(strat):
     env = make_env()
     summary, hist, rewards, _ = run_episode(env, strat, seed=0)

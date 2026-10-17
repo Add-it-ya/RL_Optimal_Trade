@@ -1,7 +1,7 @@
-"""Statistical-utility tests: bootstrap CI coverage, paired-bootstrap pairing, multiple-testing
-correction and the deflated / probabilistic Sharpe ratio.  These use only NumPy/SciPy (the
-core dependencies), so the multiple-testing tests exercise the NumPy fallback when statsmodels
-is absent and the statsmodels path when it is installed.
+"""Statistical-utility tests: bootstrap CI coverage, paired-bootstrap pairing and
+multiple-testing correction.  These use only NumPy/SciPy (the core dependencies), so the
+multiple-testing tests exercise the NumPy fallback when statsmodels is absent and the
+statsmodels path when it is installed.
 """
 
 import sys
@@ -14,10 +14,8 @@ from rl_execution.metrics.stats import (
     adjust_pvalues,
     benjamini_hochberg,
     bootstrap_ci,
-    deflated_sharpe,
     holm_bonferroni,
     paired_bootstrap_ci,
-    probabilistic_sharpe_ratio,
 )
 
 
@@ -76,19 +74,6 @@ def test_adjust_pvalues_reject_flags_and_empty():
     assert adj.shape == (3,)
     r_empty, a_empty = adjust_pvalues([], method="bh")
     assert r_empty.size == 0 and a_empty.size == 0
-
-
-def test_deflated_sharpe_monotonic_in_trials():
-    """Searching more trials deflates the same Sharpe toward 0.5 (lower DSR)."""
-    base = deflated_sharpe(0.3, n_trials=1, n_obs=120)
-    many = deflated_sharpe(0.3, n_trials=100, n_obs=120)
-    assert 0.0 <= many < base <= 1.0
-
-
-def test_probabilistic_sharpe_increases_with_sharpe():
-    lo = probabilistic_sharpe_ratio(0.1, 0.0, n_obs=40)
-    hi = probabilistic_sharpe_ratio(0.5, 0.0, n_obs=40)
-    assert 0.0 <= lo < hi <= 1.0
 
 
 def test_correction_uses_numpy_fallback_without_statsmodels(monkeypatch):

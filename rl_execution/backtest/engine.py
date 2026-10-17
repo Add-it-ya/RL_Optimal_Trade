@@ -112,9 +112,8 @@ def evaluate(
     ``base_seed + k`` and ``2k + 1`` reuses that seed with every normal draw negated
     (``Z -> -Z``).  Because execution cost is close to monotone in the price path, the two
     halves of a pair have strongly negative error correlation and their average is a
-    lower-variance estimate than two independent draws.  It requires a Brownian price
-    process (``MarketConfig.price_process`` other than ``'legacy'``); the resulting episodes
-    are dependent within a pair, so downstream statistics must use ``block=2``.
+    lower-variance estimate than two independent draws.  The resulting episodes are
+    dependent within a pair, so downstream statistics must use ``block=2``.
     """
     env = env_factory()
     name = name or getattr(strategy, "name", strategy.__class__.__name__)
@@ -159,11 +158,9 @@ def compare_strategies(
 ) -> Dict[str, BacktestResult]:
     """Evaluate several strategies on the *same* sequence of episodes (paired seeds).
 
-    Under a Brownian price process the seed fixes the entire exogenous market before the
-    agent acts, so "same sequence of episodes" means the strategies face bit-identical
-    price, spread, depth and volume paths -- true common random numbers.  Under the legacy
-    process a strategy's own trades consume randomness, so the paths decouple after the
-    first differing action and the pairing is only approximate.
+    The seed fixes the entire exogenous market before the agent acts, so "same sequence of
+    episodes" means the strategies face bit-identical price, spread, depth and volume
+    paths -- true common random numbers.
     """
     results: Dict[str, BacktestResult] = {}
     for name, strat in strategies.items():
@@ -177,6 +174,20 @@ def compare_strategies(
             antithetic=antithetic,
         )
     return results
+
+
+def pool_results(results: List[BacktestResult], name: str) -> BacktestResult:
+    """Concatenate several results (e.g. one per training seed) into a single result."""
+    pooled = BacktestResult(name=name)
+    for res in results:
+        pooled.episode_metrics.extend(res.episode_metrics)
+        pooled.summaries.extend(res.summaries)
+        pooled.inventory_trajectories.extend(res.inventory_trajectories)
+        pooled.schedules.extend(res.schedules)
+        pooled.reward_curves.extend(res.reward_curves)
+        pooled.price_paths.extend(res.price_paths)
+    pooled.aggregate = aggregate_metrics(pooled.episode_metrics)
+    return pooled
 
 
 def results_table(results: Dict[str, BacktestResult]) -> pd.DataFrame:

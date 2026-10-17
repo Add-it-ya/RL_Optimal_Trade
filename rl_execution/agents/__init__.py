@@ -1,8 +1,8 @@
 """Model-free RL agents and the strategy adapter.
 
-Two custom agents (DQN, Double DQN) are implemented from scratch in PyTorch; PPO, A2C, SAC
-and SB3's DQN are provided through Stable-Baselines3.  Torch / SB3 are imported lazily so
-the rest of the package works without a deep-learning backend.
+Two agents are supported: PPO (through Stable-Baselines3) and DQN / Double DQN
+(implemented from scratch in PyTorch).  Torch / SB3 are imported lazily so the rest of the
+package works without a deep-learning backend.
 
 Each algorithm requires a particular action-space parametrisation, exposed via
 :data:`ALGO_ACTION_TYPE` so callers can build a compatible :class:`ExecutionEnv`.
@@ -15,58 +15,65 @@ from typing import Optional
 from rl_execution.agents.base import AgentStrategy, BaseAgent
 from rl_execution.config import ActionType
 
-# value-based agents need a discrete action grid; policy/actor-critic use continuous
+# value-based agents need a discrete action grid; PPO uses the continuous one
 ALGO_ACTION_TYPE = {
     "dqn": ActionType.DISCRETE,
     "doubledqn": ActionType.DISCRETE,
-    "ddqn": ActionType.DISCRETE,
-    "sb3dqn": ActionType.DISCRETE,
     "ppo": ActionType.CONTINUOUS,
-    "a2c": ActionType.CONTINUOUS,
-    "sac": ActionType.CONTINUOUS,
 }
 
-ALL_AGENTS = ["DQN", "DoubleDQN", "PPO", "A2C", "SAC"]
+#: Canonical display name of each agent, used for run folders and result tables.
+DISPLAY_NAMES = {"dqn": "DQN", "doubledqn": "DoubleDQN", "ppo": "PPO"}
+
+ALL_AGENTS = list(DISPLAY_NAMES.values())
 
 
-def _normalize(name: str) -> str:
-    return name.lower().replace("-", "").replace("_", "").replace(" ", "")
+def normalize_agent_name(name: str) -> str:
+    """Canonical lower-case key: ``"Double-DQN"`` / ``"ddqn"`` -> ``"doubledqn"``."""
+    key = name.lower().replace("-", "").replace("_", "").replace(" ", "")
+    key = "doubledqn" if key == "ddqn" else key
+    if key not in ALGO_ACTION_TYPE:
+        raise KeyError(f"Unknown agent '{name}'. Available: {sorted(ALGO_ACTION_TYPE)}")
+    return key
 
 
 def required_action_type(name: str) -> ActionType:
-    key = _normalize(name)
-    if key not in ALGO_ACTION_TYPE:
-        raise KeyError(f"Unknown agent '{name}'. Available: {sorted(ALGO_ACTION_TYPE)}")
-    return ALGO_ACTION_TYPE[key]
+    return ALGO_ACTION_TYPE[normalize_agent_name(name)]
 
 
 def make_agent(name: str, env, seed: Optional[int] = None, **kwargs) -> BaseAgent:
-    """Factory: build an agent by name, bound to ``env``.
+    """Factory: build an agent by name (``ppo``, ``dqn``, ``doubledqn``) bound to ``env``."""
+    key = normalize_agent_name(name)
+    if key == "ppo":
+        from rl_execution.agents.ppo import PPOAgent
 
-    Names (case-insensitive): ``dqn``, ``doubledqn`` (``ddqn``), ``ppo``, ``a2c``, ``sac``,
-    ``sb3dqn``.  The custom value-based agents (``dqn`` / ``doubledqn``) use the from-scratch
-    PyTorch implementation; the others use Stable-Baselines3.
-    """
-    key = _normalize(name)
-    if key in ("dqn", "doubledqn", "ddqn"):
-        from rl_execution.agents.dqn import DQNAgent
+        return PPOAgent(env=env, seed=seed, **kwargs)
 
-        return DQNAgent(env, double=key in ("doubledqn", "ddqn"), seed=seed, **kwargs)
+    from rl_execution.agents.dqn import DQNAgent
 
-    if key in ("ppo", "a2c", "sac", "sb3dqn"):
-        from rl_execution.agents.sb3_agents import SB3Agent
+    return DQNAgent(env, double=key == "doubledqn", seed=seed, **kwargs)
 
-        algo = "dqn" if key == "sb3dqn" else key
-        return SB3Agent(algo, env=env, seed=seed, **kwargs)
 
-    raise KeyError(f"Unknown agent '{name}'. Available: {sorted(ALGO_ACTION_TYPE)}")
+def load_agent_file(name: str, path: str, env=None) -> BaseAgent:
+    """Load a saved agent of type ``name`` from ``path``."""
+    if normalize_agent_name(name) == "ppo":
+        from rl_execution.agents.ppo import PPOAgent
+
+        return PPOAgent.load(path, env=env)
+
+    from rl_execution.agents.dqn import DQNAgent
+
+    return DQNAgent.load(path, env=env)
 
 
 __all__ = [
     "BaseAgent",
     "AgentStrategy",
     "make_agent",
+    "load_agent_file",
+    "normalize_agent_name",
     "required_action_type",
     "ALGO_ACTION_TYPE",
+    "DISPLAY_NAMES",
     "ALL_AGENTS",
 ]

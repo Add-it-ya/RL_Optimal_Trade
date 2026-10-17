@@ -6,6 +6,41 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+A lean core: fewer moving parts, each one trained and tested properly.
+
+### Removed
+- The non-Brownian `legacy` price walk, together with `rng_mode` (independent substreams are
+  now the only mode), the always-adverse latency model and the bit-identity tests that pinned
+  them. The legacy walk let a strategy's own trades consume the random draws that drove the
+  price, so paired comparisons were not true common random numbers.
+- A2C, SAC and SB3-DQN; the agents are now PPO and the from-scratch DQN / Double DQN.
+- The POV and Random baselines.
+- Real-LOB replay (`rl_execution.data`), the multi-agent simulator and the Streamlit dashboard.
+- MLflow / W&B tracking, the model registry, Optuna HPO, the multi-seed harness and the
+  deflated / probabilistic Sharpe helpers.
+- Docker files, issue / PR templates, `CONTRIBUTING.md` and internal planning documents.
+- The v0.1 `results/`, `models/` sidecars and `reports/REPORT.md`. They could not be
+  regenerated from the repository, and the published PPO row matched a do-nothing policy.
+
+### Changed
+- Every price process is Brownian; the default is arithmetic BM (`price_process: abm`), and
+  the `sideways` regime and mean-reverting randomised draws use `ou`.
+- One command line, `rlx train | evaluate | report`, replaces the five `rlx-*` entry points and
+  the wrapper scripts. `train --seeds 0-9` trains several seeds and skips completed ones.
+- Runs live in `runs/<experiment>/<Agent>/seed_<k>/` with `config.yaml`, weights,
+  `train_log.csv` and `provenance.json`, which now records the weights' SHA-256; `load_run`
+  refuses weights that do not match.
+- `rlx evaluate` uses a dedicated block of test seeds and supports `--antithetic`; `rlx report`
+  takes the training seed as the unit of analysis for confidence intervals and Holm-corrects
+  across every comparison.
+- Python 3.10+; numpy 2 is allowed; CI runs a single lint, type-check and test job.
+- The Windows OpenMP workaround (`KMP_DUPLICATE_LIB_OK`) is only applied on Windows.
+
+### Fixed
+- The agent tests now train past `learning_starts`, so the DQN tests run gradient updates.
+
+## [0.1.1]
+
 ### Added
 - Sandboxed smoke runs: `rlx-experiments` and `rlx-multiseed` gain `--out-dir` / `--models-dir`,
   and `--quick` defaults them to `results/quick/` and `models/quick/` (figures follow the results

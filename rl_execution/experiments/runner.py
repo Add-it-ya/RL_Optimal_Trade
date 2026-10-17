@@ -1,8 +1,9 @@
 """Experiment runners: evaluate strategies across market regimes.
 
 A strategy may require a particular action space (discrete value-based agents vs continuous
-policy agents).  Because every regime is replayed with paired seeds, strategies on
-different action spaces still face identical price paths and are directly comparable.
+policy agents).  Because every regime is replayed with paired seeds and the market path is
+drawn before anyone acts, strategies on different action spaces face identical price paths
+and are directly comparable.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from rl_execution.backtest import BacktestResult, evaluate
-from rl_execution.baselines import POV, TWAP, VWAP, AlmgrenChriss, RandomStrategy
+from rl_execution.baselines import TWAP, VWAP, AlmgrenChriss
 from rl_execution.config import ActionType, ExecutionConfig
 from rl_execution.envs import ExecutionEnv
 from rl_execution.experiments.regimes import (
@@ -41,15 +42,11 @@ class DomainRandomizedEnv(ExecutionEnv):
         return super().reset(seed=seed, options=options)
 
 
-def build_baselines(
-    ac_risk_aversion: float = 1.0e-7, pov_rate: float = 0.2, seed: int = 0
-) -> Dict[str, Any]:
+def build_baselines(ac_risk_aversion: float = 1.0e-7) -> Dict[str, Any]:
     """Construct the standard set of baseline strategies."""
     return {
         "TWAP": TWAP(),
         "VWAP": VWAP(),
-        "POV": POV(pov_rate),
-        "Random": RandomStrategy(seed=seed),
         "AlmgrenChriss": AlmgrenChriss(risk_aversion=ac_risk_aversion),
     }
 
@@ -62,10 +59,12 @@ def evaluate_across_regimes(
     n_episodes: int = 50,
     base_seed: int = 0,
     progress: bool = True,
+    antithetic: bool = False,
 ) -> Dict[str, Dict[str, BacktestResult]]:
-    """Evaluate each strategy in each regime.
+    """Evaluate each strategy in each regime on the same seeds (common random numbers).
 
-    Returns a nested mapping ``{regime: {strategy_name: BacktestResult}}``.
+    ``antithetic`` evaluates in ``Z`` / ``-Z`` pairs (see :func:`evaluate`); downstream
+    statistics must then use ``block=2``.  Returns ``{regime: {strategy_name: BacktestResult}}``.
     """
     exec_config = exec_config or ExecutionConfig()
     regimes = regimes or list_regimes()
@@ -89,6 +88,7 @@ def evaluate_across_regimes(
                 base_seed=base_seed,
                 name=name,
                 progress=progress,
+                antithetic=antithetic,
             )
     return results
 

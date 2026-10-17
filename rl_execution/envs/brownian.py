@@ -135,13 +135,8 @@ def correlated_normals(
 class NoiseStreams:
     """A bundle of independent generators, one per :class:`Stream`.
 
-    Two construction modes:
-
-    * :meth:`from_seed` -- ``SeedSequence(seed).spawn(...)`` gives statistically independent
-      substreams.  Adding a draw to one stream leaves the others bit-identical.
-    * :meth:`shared` -- every :class:`Stream` maps to the *same* generator.  This reproduces
-      the historical single-generator draw order exactly and exists so legacy results stay
-      reproducible.
+    :meth:`from_seed` uses ``SeedSequence(seed).spawn(...)`` to give statistically
+    independent substreams: adding a draw to one stream leaves the others bit-identical.
 
     ``antithetic`` negates every normal drawn through :meth:`normals`.  Pairing an episode
     seeded ``s`` with ``antithetic=False`` against the same seed with ``antithetic=True``
@@ -149,7 +144,6 @@ class NoiseStreams:
     """
 
     gens: Dict[Stream, np.random.Generator]
-    shared_generator: bool = False
     antithetic: bool = False
     method: str = "ziggurat"
     seed: Optional[int] = field(default=None, compare=False)
@@ -162,18 +156,7 @@ class NoiseStreams:
         """Independent substreams spawned from one integer seed."""
         children = np.random.SeedSequence(int(seed)).spawn(len(Stream))
         gens = {s: np.random.default_rng(c) for s, c in zip(Stream, children)}
-        return cls(
-            gens, shared_generator=False, antithetic=antithetic, method=method, seed=int(seed)
-        )
-
-    @classmethod
-    def shared(
-        cls, rng: np.random.Generator, *, antithetic: bool = False, method: str = "ziggurat"
-    ) -> "NoiseStreams":
-        """Legacy mode: all streams are the same generator, preserving draw order."""
-        return cls(
-            {s: rng for s in Stream}, shared_generator=True, antithetic=antithetic, method=method
-        )
+        return cls(gens, antithetic=antithetic, method=method, seed=int(seed))
 
     # -- access ---------------------------------------------------------------------
     def __getitem__(self, stream: Stream) -> np.random.Generator:
@@ -198,23 +181,17 @@ class NoiseStreams:
 
 def make_streams(
     rng: np.random.Generator,
-    mode: str = "legacy",
     *,
     antithetic: bool = False,
     method: str = "ziggurat",
 ) -> NoiseStreams:
     """Build a :class:`NoiseStreams` from an existing generator.
 
-    ``mode='legacy'`` shares ``rng`` across all streams (historical draw order preserved).
-    ``mode='streams'`` consumes a single integer from ``rng`` and spawns independent
-    substreams from it, so the bundle is still a deterministic function of ``rng``'s state.
+    Consumes a single integer from ``rng`` and spawns independent substreams from it, so
+    the bundle is still a deterministic function of ``rng``'s state.
     """
-    if mode == "streams":
-        seed = int(rng.integers(0, 2**63 - 1))
-        return NoiseStreams.from_seed(seed, antithetic=antithetic, method=method)
-    if mode == "legacy":
-        return NoiseStreams.shared(rng, antithetic=antithetic, method=method)
-    raise ValueError(f"Unknown rng_mode '{mode}'. Expected 'legacy' or 'streams'.")
+    seed = int(rng.integers(0, 2**63 - 1))
+    return NoiseStreams.from_seed(seed, antithetic=antithetic, method=method)
 
 
 # --------------------------------------------------------------------------- brownian

@@ -4,7 +4,8 @@ Each regime is a :class:`~rl_execution.config.MarketConfig`.  Regimes are groupe
 
 * **volatility**  -- low / medium / high realised volatility,
 * **liquidity**   -- thin / normal / deep order books,
-* **trend**       -- bull (drift up) / bear (drift down) / sideways (mean-reverting).
+* **trend**       -- bull (drift up) / bear (drift down) / sideways (mean-reverting),
+* **brownian**    -- alternative price models and volatility dynamics.
 
 :func:`randomized_market_config` samples a config from across these axes and is used for
 *domain-randomised* training so a single agent generalises to unseen conditions.
@@ -22,7 +23,8 @@ from rl_execution.config import MarketConfig
 # A modest, exploitable order-book-imbalance alpha is present across regimes so that a
 # *state-reactive* policy can add value over static schedules; drift magnitudes are kept
 # small relative to per-step volatility so that timing skill (not trivial front-loading)
-# is what differentiates strategies.
+# is what differentiates strategies.  The price follows arithmetic Brownian motion (the
+# Almgren-Chriss world) unless a regime says otherwise.
 _BASE = MarketConfig(imbalance_alpha=0.05, imbalance_strength=0.40, imbalance_persistence=0.85)
 
 REGIMES: Dict[str, MarketConfig] = {
@@ -51,14 +53,12 @@ REGIMES: Dict[str, MarketConfig] = {
     # --- trend (drift small vs sqrt-horizon volatility) ---
     "bull": replace(_BASE, drift=0.0008),
     "bear": replace(_BASE, drift=-0.0008),
-    "sideways": replace(_BASE, drift=0.0, mean_reversion=0.10),
+    "sideways": replace(_BASE, price_process="ou", drift=0.0, mean_reversion=0.10),
 }
 
 # --- Brownian-process regimes -------------------------------------------------------
-# These select an explicit SDE (rl_execution.envs.processes) instead of the historical
-# inline update, and run on independent RNG substreams so the exogenous market path is
-# fixed before the agent acts.
-_BROWNIAN = replace(_BASE, rng_mode="streams", price_process="gbm")
+# Alternative price models and volatility dynamics, kept as a separate, labelled grid.
+_BROWNIAN = replace(_BASE, price_process="gbm")
 
 REGIMES.update(
     {
@@ -115,14 +115,13 @@ BROWNIAN_REGIMES: List[str] = list(REGIME_GROUPS["brownian"])
 def list_regimes(include_brownian: bool = False) -> List[str]:
     """Names of the standard evaluation regimes.
 
-    The Brownian-process regimes are **excluded by default**.  They run a different price
-    model, so folding them into the standard grid would silently change the headline
-    "beats the benchmark in N/N regimes" count *and* enlarge the family of tests that
+    The Brownian-process regimes are **excluded by default**.  They run different price
+    models, so folding them into the standard grid would enlarge the family of tests that
     :func:`~rl_execution.backtest.engine.corrected_significance` corrects over -- which
-    moves the adjusted p-value of every pre-existing comparison.
+    moves the adjusted p-value of every other comparison.
 
     Pass ``include_brownian=True``, or name them explicitly
-    (``rlx-experiments --regimes abm_ac_optimal gbm_medium ...``), to evaluate them as a
+    (``rlx evaluate --regimes abm_ac_optimal gbm_medium ...``), to evaluate them as a
     separate, labelled grid.
     """
     return CLASSIC_REGIMES + BROWNIAN_REGIMES if include_brownian else list(CLASSIC_REGIMES)
@@ -139,11 +138,9 @@ def randomized_market_config(
 ) -> MarketConfig:
     """Sample a market config spanning the regime axes (for robust training).
 
-    With ``brownian=True`` the sampler additionally randomises over the Brownian axes --
-    price process, volatility clustering and the leverage correlation -- so a
-    domain-randomised agent also generalises across *price models*, not just across
-    parameters of one model.  The default is the historical (non-Brownian) sampler so
-    existing training runs are unchanged.
+    With ``brownian=True`` the sampler additionally randomises over price process,
+    volatility clustering and the leverage correlation, so a domain-randomised agent also
+    generalises across *price models*, not just across parameters of one model.
     """
     rng = rng or np.random.default_rng()
     cfg = MarketConfig(
@@ -160,12 +157,13 @@ def randomized_market_config(
         imbalance_strength=0.40,
         imbalance_persistence=0.85,
     )
+    if cfg.mean_reversion > 0:
+        cfg = replace(cfg, price_process="ou")
     if not brownian:
         return cfg
     mean_reversion = float(cfg.mean_reversion)
     return replace(
         cfg,
-        rng_mode="streams",
         price_process=str(
             rng.choice(["gbm", "abm", "ou"] if mean_reversion > 0 else ["gbm", "abm"])
         ),

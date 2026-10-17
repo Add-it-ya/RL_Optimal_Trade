@@ -193,25 +193,16 @@ def test_substream_isolation_under_added_draws():
     assert np.array_equal(perturbed.normals(Stream.PRICE, 5), baseline)
 
 
-def test_shared_mode_reuses_one_generator():
-    rng = np.random.default_rng(17)
-    s = NoiseStreams.shared(rng)
-    assert s.shared_generator
-    assert all(s[stream] is rng for stream in Stream)
-
-
 def test_antithetic_pairs_sum_to_zero():
     plain = NoiseStreams.from_seed(18, antithetic=False).normals(Stream.PRICE, 100)
     flipped = NoiseStreams.from_seed(18, antithetic=True).normals(Stream.PRICE, 100)
     assert np.allclose(plain + flipped, 0.0)
 
 
-def test_make_streams_modes():
-    rng = np.random.default_rng(19)
-    assert make_streams(rng, "legacy").shared_generator
-    assert not make_streams(rng, "streams").shared_generator
-    with pytest.raises(ValueError):
-        make_streams(rng, "bogus")
+def test_make_streams_is_a_function_of_the_rng_state():
+    a = make_streams(np.random.default_rng(19)).normals(Stream.PRICE, 5)
+    b = make_streams(np.random.default_rng(19)).normals(Stream.PRICE, 5)
+    assert np.array_equal(a, b)
 
 
 # =============================================================== price processes
@@ -274,8 +265,6 @@ def test_make_price_process_registry():
     assert isinstance(make_price_process(MarketConfig(price_process="gbm")), GeometricBM)
     assert isinstance(make_price_process(MarketConfig(price_process="abm")), ArithmeticBM)
     with pytest.raises(ValueError):
-        make_price_process(MarketConfig(price_process="legacy"))
-    with pytest.raises(ValueError):
         make_price_process(MarketConfig(price_process="bogus"))
 
 
@@ -322,7 +311,6 @@ def test_leverage_correlation_is_realised():
     """rho < 0 => volatility rises as the price falls (the leverage effect)."""
     cfg = MarketConfig(
         price_process="gbm",
-        rng_mode="streams",
         vol_process="expou",
         vol_of_vol=0.5,
         vol_persistence=0.8,
@@ -340,7 +328,7 @@ def test_leverage_correlation_is_realised():
 @pytest.mark.parametrize("phi, min_ratio", [(0.5, 1.2), (0.85, 2.4)])
 def test_imbalance_ou_scaling_strengthens_a_stationary_factor(phi, min_ratio):
     """The stationary innovation makes the latent factor unit-variance before clipping."""
-    common = dict(price_process="gbm", rng_mode="streams", imbalance_persistence=phi)
+    common = dict(price_process="gbm", imbalance_persistence=phi)
     stationary = generate_market_paths(
         MarketConfig(imbalance_ou_scaling=True, **common), 60_000, NoiseStreams.from_seed(30)
     ).imbalance
@@ -359,7 +347,7 @@ def test_imbalance_ou_scaling_strengthens_a_stationary_factor(phi, min_ratio):
 
 # =============================================================== full market paths
 def test_generate_market_paths_shapes_and_ranges():
-    cfg = MarketConfig(price_process="gbm", rng_mode="streams", n_levels=7)
+    cfg = MarketConfig(price_process="gbm", n_levels=7)
     p = generate_market_paths(cfg, 30, NoiseStreams.from_seed(31))
     assert p.mid.shape == (30,)
     assert p.sigma.shape == (29,)
@@ -372,45 +360,6 @@ def test_generate_market_paths_shapes_and_ranges():
 
 
 # =============================================================== simulator integration
-def test_legacy_mode_is_bit_identical():
-    """Golden values captured at the pre-Brownian baseline; guards every published result."""
-    cfg = MarketConfig(volatility=0.02, vol_of_vol=0.2, imbalance_alpha=0.05, drift=0.0005)
-    sim = MarketSimulator(cfg, rng=np.random.default_rng(11))
-    sim.reset(horizon=25)
-    mids, spreads, imbs = [], [], []
-    for _ in range(5):
-        mids.append(sim.mid)
-        spreads.append(sim.spread)
-        imbs.append(sim.imbalance_factor)
-        sim.advance()
-
-    assert mids == pytest.approx(
-        [100.0, 96.8493876298, 97.3513522461, 97.8294340018, 95.6756844192], abs=1e-9
-    )
-    assert spreads[:3] == pytest.approx([0.02, 0.0155534454, 0.0277044413], abs=1e-9)
-    assert imbs[1:4] == pytest.approx([-0.0992419396, -0.1626312746, 0.0986693144], abs=1e-9)
-
-
-def test_legacy_env_episode_is_bit_identical():
-    env = ExecutionEnv(
-        MarketConfig(volatility=0.02, vol_of_vol=0.2, imbalance_alpha=0.05),
-        ExecutionConfig(horizon=12, latency_steps=0.3, commission_bps=1.0),
-    )
-    env.reset(seed=42)
-    rewards, info = [], {}
-    for a in [0.0, 0.2, 0.0, 0.5, 0.1, 0.0, 0.3, 0.9, 0.0, 0.4, 0.2, 1.0]:
-        _, r, term, trunc, info = env.step(np.array([a], dtype=np.float32))
-        rewards.append(r)
-        if term or trunc:
-            break
-    assert rewards[:4] == pytest.approx(
-        [-0.0, -92.9874022545, -1.1609902897, -301.3391192043], abs=1e-6
-    )
-    assert info["episode_summary"]["implementation_shortfall_bps"] == pytest.approx(
-        731.9389291146, abs=1e-6
-    )
-
-
 def _mid_path(fraction, cfg, seed=5, horizon=12):
     env = ExecutionEnv(cfg, ExecutionConfig(horizon=horizon, force_liquidation=False))
     env.reset(seed=seed)
@@ -423,29 +372,23 @@ def _mid_path(fraction, cfg, seed=5, horizon=12):
     return np.asarray(out)
 
 
-def test_price_path_is_independent_of_agent_actions():
+@pytest.mark.parametrize("process", ["abm", "gbm"])
+def test_price_path_is_independent_of_agent_actions(process):
     """With impact switched off, what the agent trades must not move the market at all.
 
-    Under the legacy dynamics it does: executing a trade re-quotes the book, consuming
-    normal draws that would otherwise have driven the price, so two strategies on one seed
-    drift onto different paths.  The Brownian mode draws the whole exogenous path up front,
-    which is what makes paired strategy comparisons genuine common random numbers.
+    The whole exogenous path is drawn up front, so no action can consume randomness that
+    would otherwise drive the price -- which is what makes paired strategy comparisons
+    genuine common random numbers.
     """
-    frozen = dict(permanent_impact=0.0, temporary_impact=0.0)
-    brownian = _mid_path(0.0, MarketConfig(price_process="gbm", rng_mode="streams", **frozen))
-    brownian_trading = _mid_path(
-        0.3, MarketConfig(price_process="gbm", rng_mode="streams", **frozen)
-    )
-    assert np.allclose(brownian, brownian_trading)
-
-    legacy = _mid_path(0.0, MarketConfig(**frozen))
-    legacy_trading = _mid_path(0.3, MarketConfig(**frozen))
-    assert not np.allclose(legacy, legacy_trading)  # documents the behaviour being fixed
+    frozen = dict(price_process=process, permanent_impact=0.0, temporary_impact=0.0)
+    idle = _mid_path(0.0, MarketConfig(**frozen))
+    trading = _mid_path(0.3, MarketConfig(**frozen))
+    assert np.allclose(idle, trading)
 
 
 @pytest.mark.parametrize("process", ["abm", "gbm", "ou"])
 def test_env_runs_under_every_price_process(process):
-    cfg = MarketConfig(price_process=process, rng_mode="streams", mean_reversion=0.1)
+    cfg = MarketConfig(price_process=process, mean_reversion=0.1)
     env = ExecutionEnv(cfg, ExecutionConfig(horizon=10))
     obs, _ = env.reset(seed=1)
     assert env.observation_space.contains(obs)
@@ -459,7 +402,7 @@ def test_env_runs_under_every_price_process(process):
 
 
 def test_permanent_impact_still_moves_the_mid_under_gbm():
-    cfg = MarketConfig(price_process="gbm", rng_mode="streams", permanent_impact=1e-4)
+    cfg = MarketConfig(price_process="gbm", permanent_impact=1e-4)
     sim = MarketSimulator(cfg, rng=np.random.default_rng(0))
     sim.reset(horizon=10)
     mid0 = sim.mid
@@ -469,7 +412,7 @@ def test_permanent_impact_still_moves_the_mid_under_gbm():
 
 
 def test_impact_persists_across_steps_under_gbm():
-    cfg = MarketConfig(price_process="gbm", rng_mode="streams", permanent_impact=1e-4)
+    cfg = MarketConfig(price_process="gbm", permanent_impact=1e-4)
     sim = MarketSimulator(cfg, rng=np.random.default_rng(2))
     sim.reset(horizon=10)
     clean = float(sim.paths.mid[1])
@@ -479,32 +422,25 @@ def test_impact_persists_across_steps_under_gbm():
     assert sim.mid == pytest.approx(clean + shift)
 
 
-# =============================================================== latency models
-def test_bridge_latency_is_unbiased_and_adverse_is_not():
-    """The adverse model always charges the trader; the bridge is centred on the chord."""
-    common = dict(price_process="gbm", rng_mode="streams", volatility=0.02)
-
-    def mean_shift(model):
-        shifts = []
-        for seed in range(300):
-            sim = MarketSimulator(
-                MarketConfig(latency_model=model, **common), np.random.default_rng(seed)
-            )
-            sim.reset(horizon=5)
-            shifts.append(sim.apply_latency(Side.SELL, 0.5))
-        return float(np.mean(shifts))
-
-    adverse = mean_shift("adverse")
-    bridge = mean_shift("bridge")
-    assert adverse < 0  # a SELL is always pushed down: latency is a pure cost
-    assert abs(bridge) < abs(adverse) / 3
+# =============================================================== latency (Brownian bridge)
+def test_bridge_latency_is_unbiased():
+    """The delayed fill's mid is centred on the chord between the two decision prices."""
+    cfg = MarketConfig(price_process="gbm", volatility=0.02, imbalance_alpha=0.0)
+    shifts = []
+    for seed in range(400):
+        sim = MarketSimulator(cfg, np.random.default_rng(seed))
+        sim.reset(horizon=5)
+        chord = 0.5 * (float(sim.paths.mid[1]) - float(sim.paths.mid[0]))
+        shifts.append(sim.apply_latency(0.5) - chord)
+    shifts = np.asarray(shifts)
+    assert abs(shifts.mean()) < 4 * shifts.std(ddof=1) / np.sqrt(shifts.size)
 
 
 def test_bridge_latency_deviation_is_transient():
-    cfg = MarketConfig(price_process="gbm", rng_mode="streams", latency_model="bridge")
+    cfg = MarketConfig(price_process="gbm")
     sim = MarketSimulator(cfg, rng=np.random.default_rng(4))
     sim.reset(horizon=8)
-    sim.apply_latency(Side.SELL, 0.5)
+    sim.apply_latency(0.5)
     assert sim._intrastep_dev != 0.0
     sim.advance()
     assert sim._intrastep_dev == 0.0
@@ -516,7 +452,6 @@ def test_antithetic_twin_mirrors_the_log_returns():
     """With constant vol and no drift, log-returns of the twin satisfy r + r' = -sigma^2 dt."""
     cfg = MarketConfig(
         price_process="gbm",
-        rng_mode="streams",
         vol_process="none",
         volatility=0.02,
         drift=0.0,
@@ -531,7 +466,7 @@ def test_antithetic_twin_mirrors_the_log_returns():
 
 def test_antithetic_reduces_the_standard_error_of_mean_is():
     """Pairing Z with -Z cancels most of the shared price risk in execution cost."""
-    cfg = MarketConfig(price_process="gbm", rng_mode="streams", volatility=0.03)
+    cfg = MarketConfig(price_process="gbm", volatility=0.03)
     factory = lambda: ExecutionEnv(cfg, ExecutionConfig(horizon=10))  # noqa: E731
 
     plain = evaluate(factory, TWAP(), n_episodes=120, base_seed=100, antithetic=False)
@@ -562,9 +497,7 @@ def test_block_bootstrap_is_wider_for_dependent_pairs():
 def test_brownian_regimes_are_registered_and_valid():
     for name in ("abm_ac_optimal", "gbm_medium", "clustered_vol", "leverage"):
         assert name in list_regimes(include_brownian=True)
-        cfg = get_regime(name)
-        assert cfg.rng_mode == "streams"
-        RunConfig(market=cfg).validate()
+        RunConfig(market=get_regime(name)).validate()
     assert get_regime("abm_ac_optimal").price_process == "abm"
     assert get_regime("leverage").leverage_corr < 0
 
@@ -572,9 +505,9 @@ def test_brownian_regimes_are_registered_and_valid():
 def test_brownian_regimes_are_excluded_from_the_default_grid():
     """The standard grid must stay at nine regimes.
 
-    ``rlx-experiments`` and ``rlx-multiseed`` default to ``list_regimes()``, and
-    ``corrected_significance`` Holm-corrects across the whole regime x strategy family --
-    so quietly adding regimes would move the adjusted p-value of every existing comparison.
+    ``rlx evaluate`` defaults to ``list_regimes()``, and the report Holm-corrects across the
+    whole regime x strategy family -- so quietly adding regimes would move the adjusted
+    p-value of every other comparison.
     """
     default = list_regimes()
     assert len(default) == 9
@@ -585,12 +518,13 @@ def test_brownian_regimes_are_excluded_from_the_default_grid():
 def test_randomized_config_can_sample_brownian_axes():
     rng = np.random.default_rng(0)
     sampled = [randomized_market_config(rng, brownian=True) for _ in range(30)]
-    assert all(c.rng_mode == "streams" for c in sampled)
     assert {c.price_process for c in sampled} <= {"gbm", "abm", "ou"}
     assert {c.vol_process for c in sampled} <= {"none", "expou"}
     assert all(-0.7 <= c.leverage_corr <= 0.0 for c in sampled)
-    # the default sampler is unchanged
-    assert randomized_market_config(np.random.default_rng(0)).price_process == "legacy"
+    # the default sampler stays on arithmetic BM (OU when it draws mean reversion)
+    rng = np.random.default_rng(0)
+    for cfg in (randomized_market_config(rng) for _ in range(30)):
+        assert cfg.price_process == ("ou" if cfg.mean_reversion > 0 else "abm")
 
 
 def test_ac_schedule_matches_itself_and_differs_from_twap():
@@ -619,12 +553,10 @@ def test_schedule_gap_handles_ragged_and_empty_input():
     [
         {"price_process": "bogus"},
         {"dt": 0.0},
-        {"rng_mode": "bogus"},
         {"normal_method": "bogus"},
         {"vol_process": "bogus"},
         {"vol_persistence": 1.0},
         {"leverage_corr": -1.5},
-        {"latency_model": "bogus"},
     ],
 )
 def test_runconfig_rejects_bad_brownian_params(kwargs):

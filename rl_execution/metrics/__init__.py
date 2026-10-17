@@ -9,10 +9,8 @@ from rl_execution.metrics.stats import (
     adjust_pvalues,
     benjamini_hochberg,
     bootstrap_ci,
-    deflated_sharpe,
     holm_bonferroni,
     paired_bootstrap_ci,
-    probabilistic_sharpe_ratio,
 )
 
 __all__ = [
@@ -24,6 +22,4 @@ __all__ = [
     "adjust_pvalues",
     "holm_bonferroni",
     "benjamini_hochberg",
-    "probabilistic_sharpe_ratio",
-    "deflated_sharpe",
 ]

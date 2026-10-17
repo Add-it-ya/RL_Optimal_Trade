@@ -49,13 +49,10 @@ class ExecutionEnv(gym.Env):
         self,
         market_config: Optional[MarketConfig] = None,
         exec_config: Optional[ExecutionConfig] = None,
-        market_source: Optional[Any] = None,
     ) -> None:
         super().__init__()
         self.market_config = market_config or MarketConfig()
         self.exec_config = exec_config or ExecutionConfig()
-        # optional historical / external market source (see rl_execution.data)
-        self.market_source = market_source
 
         self.side = self.exec_config.side
         self.horizon = int(self.exec_config.horizon)
@@ -120,20 +117,10 @@ class ExecutionEnv(gym.Env):
         rng = np.random.default_rng(market_seed)
         # ``options={"antithetic": True}`` mirrors every normal draw (Z -> -Z).  Pairing a
         # seed's ordinary episode with its antithetic twin is the variance-reduction trick
-        # used by ``evaluate(antithetic=True)``; it requires a Brownian price process.
+        # used by ``evaluate(antithetic=True)``.
         antithetic = bool((options or {}).get("antithetic", False))
-        if self.market_source is not None:
-            # replay historical / real LOB data instead of the synthetic market
-            self.market = self.market_source.make_simulator(rng)
-        else:
-            streams = make_streams(
-                rng,
-                self.market_config.rng_mode,
-                antithetic=antithetic,
-                method=self.market_config.normal_method,
-            )
-            self.market = MarketSimulator(self.market_config, rng=rng, streams=streams)
-        assert self.market is not None
+        streams = make_streams(rng, antithetic=antithetic, method=self.market_config.normal_method)
+        self.market = MarketSimulator(self.market_config, rng=rng, streams=streams)
         self.market.reset(horizon=self.horizon)
 
         self.t = 0
@@ -164,9 +151,9 @@ class ExecutionEnv(gym.Env):
         shares = min(fraction * self.remaining, self.remaining)
         shares = max(shares, 0.0)
 
-        # latency: market drifts adversely before our order fills
+        # latency: the order reaches the book part-way into the step (Brownian bridge)
         if cfg.latency_steps > 0 and shares > 0:
-            m.apply_latency(self.side, cfg.latency_steps)
+            m.apply_latency(cfg.latency_steps)
 
         exec_result = m.execute(self.side, shares)
         filled = exec_result.filled_shares

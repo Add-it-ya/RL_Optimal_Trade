@@ -166,19 +166,11 @@ PRICE_PROCESSES: Dict[str, Type[PriceProcess]] = {
 
 
 def make_price_process(config: MarketConfig) -> PriceProcess:
-    """Instantiate the process named by ``config.price_process``.
-
-    ``'legacy'`` has no process object: the historical inline dynamics in
-    :class:`~rl_execution.envs.market.MarketSimulator` are kept verbatim so that previously
-    published results reproduce bit-for-bit.
-    """
+    """Instantiate the process named by ``config.price_process``."""
     name = str(config.price_process)
-    if name == "legacy":
-        raise ValueError("price_process='legacy' is handled inline, not by a process object.")
     if name not in PRICE_PROCESSES:
         raise ValueError(
-            f"Unknown price_process '{name}'. Expected 'legacy' or one of "
-            f"{sorted(PRICE_PROCESSES)}."
+            f"Unknown price_process '{name}'. Expected one of {sorted(PRICE_PROCESSES)}."
         )
     return PRICE_PROCESSES[name](config)
 
@@ -191,7 +183,7 @@ def volatility_path(config: MarketConfig, z_vol: np.ndarray) -> np.ndarray:
     """Per-step relative volatility, one value per increment.
 
     * ``none``          -- constant ``config.volatility``.
-    * ``iid_lognormal`` -- ``sigma_bar exp(xi Z)``, i.i.d.; no clustering (the historical model).
+    * ``iid_lognormal`` -- ``sigma_bar exp(xi Z)``, i.i.d.; no clustering.
     * ``expou``         -- exponential Ornstein-Uhlenbeck, i.e. a stationary AR(1) in
       ``ln sigma`` with per-step persistence ``phi = vol_persistence ** dt`` and innovation
       ``xi sqrt(1 - phi^2)``.  The innovation scaling is what keeps the stationary standard
@@ -232,7 +224,7 @@ def _imbalance_path(config: MarketConfig, z: np.ndarray) -> np.ndarray:
 
     * ``sqrt(1 - phi^2)`` (``imbalance_ou_scaling=True``) -- the stationary scaling, which
       gives the latent factor unit variance at any ``phi``;
-    * ``1 - phi`` (default) -- the historical scaling, whose stationary standard deviation is
+    * ``1 - phi`` (default) -- the original scaling, whose stationary standard deviation is
       only ``sqrt((1 - phi) / (1 + phi))`` (about 0.28 at ``phi = 0.85``), i.e. the realised
       skew and alpha are several times weaker than the configured values.
 
@@ -240,8 +232,6 @@ def _imbalance_path(config: MarketConfig, z: np.ndarray) -> np.ndarray:
     version: a unit-variance Gaussian saturates about 32% of the time, so the *observed*
     standard deviation is about 0.72 rather than 1.0.  That is still 2.5x the historical
     scaling, so switching this on materially strengthens both the book skew and the alpha.
-
-    The default is the historical scaling so existing results are unchanged.
     """
     n = int(np.asarray(z).size)
     phi = float(np.clip(config.imbalance_persistence, 0.0, 0.999999)) ** float(config.dt)
@@ -249,7 +239,7 @@ def _imbalance_path(config: MarketConfig, z: np.ndarray) -> np.ndarray:
     inn = float(np.sqrt(1.0 - phi**2)) if stationary else (1.0 - phi)
 
     out = np.empty(n + 1)
-    # a stationary process starts from its stationary law; the legacy one starts at zero
+    # a stationary process starts from its stationary law; the original one starts at zero
     out[0] = float(z[0]) if stationary else 0.0
     for t in range(n):
         out[t + 1] = phi * out[t] + inn * float(z[t])

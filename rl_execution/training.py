@@ -1,32 +1,46 @@
-"""High-level training / persistence helpers shared by the CLI scripts and dashboard.
+"""Training and run-folder persistence.
 
-Builds an action-space-compatible environment for a given algorithm (optionally a fixed
-regime or the domain-randomised distribution), trains the agent while logging per-episode
-returns, and saves the model plus a JSON sidecar describing how to rebuild it.
+A *run* is one (agent, seed) training job, and every run lives in its own folder::
+
+    runs/<experiment>/<agent>/seed_<k>/
+        config.yaml        the RunConfig that produced it (enough to retrain it)
+        model.zip | .pt    trained weights
+        provenance.json    git SHA, config hash, library versions and the weights' SHA-256
+        train_log.csv      undiscounted return of every training episode
+
+:func:`load_run` re-hashes the weights and refuses to load them if they do not match
+``provenance.json``, so a model file can never silently be swapped for another run's.
 """
 
 from __future__ import annotations
 
+import csv
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import gymnasium as gym
 
-from rl_execution.agents import make_agent, required_action_type
-from rl_execution.config import ExecutionConfig
+from rl_execution.agents import (
+    DISPLAY_NAMES,
+    load_agent_file,
+    make_agent,
+    normalize_agent_name,
+    required_action_type,
+)
+from rl_execution.config import ExecutionConfig, MarketConfig, RunConfig
 from rl_execution.envs import ExecutionEnv
 from rl_execution.experiments.regimes import get_regime
 from rl_execution.experiments.runner import DomainRandomizedEnv
-from rl_execution.utils.io import MODELS_DIR, ensure_dir, load_json, save_json
-from rl_execution.utils.provenance import capture_provenance
+from rl_execution.utils.config_io import dump_run_config, load_run_config
+from rl_execution.utils.io import ensure_dir, load_json, save_json
+from rl_execution.utils.provenance import capture_provenance, file_sha256
 from rl_execution.utils.seeding import set_global_seeds
 
-_CUSTOM = {"dqn", "doubledqn", "ddqn"}
+PathLike = Union[str, Path]
 
-
-def _norm(name: str) -> str:
-    return name.lower().replace("-", "").replace("_", "").replace(" ", "")
+#: Weight file written for each agent inside its run folder.
+MODEL_FILES = {"ppo": "model.zip", "dqn": "model.pt", "doubledqn": "model.pt"}
 
 
 class EpisodeRewardLogger(gym.Wrapper):
@@ -50,21 +64,25 @@ class EpisodeRewardLogger(gym.Wrapper):
         return obs, reward, terminated, truncated, info
 
 
+# --------------------------------------------------------------------------- environments
 def make_env(
     agent_name: str,
     exec_config: Optional[ExecutionConfig] = None,
     regime: Optional[str] = None,
     randomized: bool = False,
     seed: Optional[int] = None,
+    market_config: Optional[MarketConfig] = None,
 ) -> ExecutionEnv:
-    """Build an :class:`ExecutionEnv` whose action space matches ``agent_name``."""
-    exec_config = exec_config or ExecutionConfig()
-    ec = replace(exec_config, action_type=required_action_type(agent_name))
+    """Build an :class:`ExecutionEnv` whose action space matches ``agent_name``.
+
+    The market is the domain-randomised family when ``randomized``, else the named
+    ``regime``, else ``market_config`` (default :class:`MarketConfig`).
+    """
+    ec = replace(exec_config or ExecutionConfig(), action_type=required_action_type(agent_name))
     if randomized:
         return DomainRandomizedEnv(ec, seed=seed)
-    market_config = get_regime(regime) if regime else None
-    from rl_execution.config import MarketConfig
-
+    if regime:
+        return ExecutionEnv(get_regime(regime), ec)
     return ExecutionEnv(market_config or MarketConfig(), ec)
 
 
@@ -73,15 +91,23 @@ def make_env_factory(
     exec_config: Optional[ExecutionConfig] = None,
     regime: Optional[str] = None,
     randomized: bool = False,
+    market_config: Optional[MarketConfig] = None,
 ) -> Callable[[], ExecutionEnv]:
     """Return a zero-arg factory for evaluation envs matching ``agent_name``."""
 
     def factory():
-        return make_env(agent_name, exec_config, regime=regime, randomized=randomized)
+        return make_env(
+            agent_name,
+            exec_config,
+            regime=regime,
+            randomized=randomized,
+            market_config=market_config,
+        )
 
     return factory
 
 
+# --------------------------------------------------------------------------- training
 def train_agent(
     agent_name: str,
     total_timesteps: int = 50_000,
@@ -92,6 +118,7 @@ def train_agent(
     progress: bool = False,
     device: str = "cpu",
     agent_kwargs: Optional[Dict[str, Any]] = None,
+    market_config: Optional[MarketConfig] = None,
 ) -> Tuple[Any, List[float]]:
     """Train an agent; returns ``(agent, episode_reward_log)``.
 
@@ -100,7 +127,14 @@ def train_agent(
     if seed is not None:
         # Seed every framework RNG (python/numpy/torch/sb3) for reproducible training.
         set_global_seeds(seed)
-    env = make_env(agent_name, exec_config, regime=regime, randomized=randomized, seed=seed)
+    env = make_env(
+        agent_name,
+        exec_config,
+        regime=regime,
+        randomized=randomized,
+        seed=seed,
+        market_config=market_config,
+    )
     logged = EpisodeRewardLogger(env)
     if seed is not None:
         # Seed the env's market RNG deterministically: the agents' training loops call
@@ -115,77 +149,83 @@ def train_agent(
     return agent, logged.episode_rewards
 
 
-# --------------------------------------------------------------------------- persistence
-def _models_dir(models_dir: Optional[Union[str, Path]]) -> Path:
-    """Resolve a models directory, defaulting to ``MODELS_DIR`` *at call time*."""
-    return Path(models_dir) if models_dir is not None else MODELS_DIR
+def train_run(rc: RunConfig, progress: bool = False) -> Tuple[Any, List[float]]:
+    """Train the agent described by a :class:`RunConfig`."""
+    return train_agent(
+        rc.agent,
+        total_timesteps=rc.timesteps,
+        exec_config=rc.execution,
+        regime=rc.regime,
+        randomized=rc.randomized,
+        seed=rc.seed,
+        progress=progress,
+        device=rc.device,
+        agent_kwargs=rc.agent_kwargs or None,
+        market_config=rc.market,
+    )
 
 
-def model_artifact_path(
-    agent_name: str,
-    tag: Optional[str] = None,
-    models_dir: Optional[Union[str, Path]] = None,
+def env_factory_for(rc: RunConfig) -> Callable[[], ExecutionEnv]:
+    """Evaluation-env factory matching the market a run was trained on."""
+    return make_env_factory(
+        rc.agent, rc.execution, regime=rc.regime, randomized=rc.randomized, market_config=rc.market
+    )
+
+
+# --------------------------------------------------------------------------- run folders
+def run_dir(root: PathLike, experiment: str, agent_name: str, seed: int) -> Path:
+    """``<root>/<experiment>/<Agent>/seed_<seed>``."""
+    agent = DISPLAY_NAMES[normalize_agent_name(agent_name)]
+    return Path(root) / experiment / agent / f"seed_{int(seed)}"
+
+
+def save_run(
+    agent: Any,
+    rc: RunConfig,
+    directory: PathLike,
+    train_log: Optional[List[float]] = None,
 ) -> Path:
-    """The on-disk model file (with extension) that :func:`save_agent` writes for an agent."""
-    tag = tag or _norm(agent_name)
-    ext = ".pt" if _norm(agent_name) in _CUSTOM else ".zip"
-    return _models_dir(models_dir) / f"{tag}{ext}"
+    """Write a trained agent and everything needed to audit it into ``directory``."""
+    out = ensure_dir(directory)
+    model_path = out / MODEL_FILES[normalize_agent_name(rc.agent)]
+    agent.save(str(model_path))
+    dump_run_config(rc, str(out / "config.yaml"))
+
+    provenance = capture_provenance(seed=rc.seed, config=rc)
+    provenance["model_file"] = model_path.name
+    provenance["weights_sha256"] = file_sha256(model_path)
+    save_json(provenance, out / "provenance.json")
+
+    with open(out / "train_log.csv", "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["episode", "return"])
+        writer.writerows(enumerate(train_log or []))
+    return out
 
 
-def save_agent(
-    agent,
-    agent_name: str,
-    tag: Optional[str] = None,
-    meta: Optional[Dict[str, Any]] = None,
-    *,
-    seed: Optional[int] = None,
-    config: Any = None,
-    provenance: bool = True,
-    models_dir: Optional[Union[str, Path]] = None,
-) -> str:
-    """Persist a trained agent and a JSON sidecar; returns the model path (without ext).
+def load_run(directory: PathLike, env=None, verify: bool = True) -> Tuple[Any, RunConfig]:
+    """Load ``(agent, run_config)`` from a run folder.
 
-    When ``provenance`` is true the sidecar is stamped with a lineage block
-    ({git_sha, config_hash, lib_versions, seed, ...}) so the artifact is self-describing
-    and auditable.  ``config`` (e.g. a :class:`RunConfig`) is hashed into ``config_hash``.
-    ``models_dir`` defaults to the project ``models/`` directory; pass it to keep a smoke
-    run out of the published artefacts.
+    With ``verify`` (the default) the weights are re-hashed and compared with the SHA-256
+    recorded at save time; a mismatch raises ``ValueError`` instead of loading a model that
+    did not produce this folder's config.
     """
-    root = _models_dir(models_dir)
-    ensure_dir(root)
-    tag = tag or _norm(agent_name)
-    backend = "custom" if _norm(agent_name) in _CUSTOM else "sb3"
-    ext = ".pt" if backend == "custom" else ".zip"
-    model_path = str(root / f"{tag}{ext}")
-    agent.save(model_path if backend == "custom" else str(root / tag))
-
-    sidecar: Dict[str, Any] = {
-        "agent_name": agent_name,
-        "backend": backend,
-        "algo": "dqn" if backend == "sb3" and _norm(agent_name) == "sb3dqn" else _norm(agent_name),
-        "action_type": required_action_type(agent_name).value,
-    }
-    if meta:
-        sidecar.update(meta)
-    if provenance:
-        sidecar["provenance"] = capture_provenance(seed=seed, config=config)
-    save_json(sidecar, str(root / f"{tag}.json"))
-    return str(root / tag)
+    directory = Path(directory)
+    rc = load_run_config(str(directory / "config.yaml"), validate=False)
+    provenance = load_json(directory / "provenance.json")
+    model_path = directory / provenance["model_file"]
+    if verify:
+        actual = file_sha256(model_path)
+        if actual != provenance["weights_sha256"]:
+            raise ValueError(
+                f"Weights at {model_path} do not match provenance.json "
+                f"(sha256 {actual[:12]}... != {provenance['weights_sha256'][:12]}...)."
+            )
+    if env is None:
+        env = env_factory_for(rc)()
+    return load_agent_file(rc.agent, str(model_path), env=env), rc
 
 
-def load_agent(tag: str, env, models_dir: Optional[Union[str, Path]] = None) -> Any:
-    """Rebuild a saved agent bound to ``env`` from its JSON sidecar.
-
-    ``models_dir`` defaults to the project ``models/`` directory but can point elsewhere
-    (e.g. a temp dir produced by the model registry's ``load_registered``).
-    """
-    models_dir = _models_dir(models_dir)
-    meta = load_json(str(models_dir / f"{tag}.json"))
-    backend = meta["backend"]
-    if backend == "custom":
-        from rl_execution.agents.dqn import DQNAgent
-
-        return DQNAgent.load(str(models_dir / f"{tag}.pt"), env=env)
-    from rl_execution.agents.sb3_agents import SB3Agent
-
-    return SB3Agent.load(str(models_dir / f"{tag}.zip"), env=env, algo=meta["algo"])
+def find_runs(root: PathLike) -> List[Path]:
+    """Every run folder (one containing ``provenance.json``) under ``root``, sorted."""
+    return sorted(p.parent for p in Path(root).rglob("provenance.json"))
