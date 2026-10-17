@@ -10,7 +10,7 @@ strategies used on trading desks, including the closed-form **Almgren-Chriss** o
 > two agents, three commands. The v0.1 headline results were withdrawn after an audit showed
 > the reward favoured a do-nothing, dump-at-the-end policy and the published weights could no
 > longer be reproduced. New results will be published from the recalibrated simulator, with
-> confidence intervals across training seeds.
+> confidence intervals across training seeds. See [ROADMAP.md](ROADMAP.md) for the plan.
 
 ---
 
