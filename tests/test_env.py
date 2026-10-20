@@ -48,26 +48,28 @@ def test_rewards_sum_exactly_to_minus_the_objective(process, side, latency):
         vol_persistence=0.8,
     )
     env = ExecutionEnv(market, ExecutionConfig(side=side, latency_steps=latency))
+    scale = env.exec_config.reward.reward_scale
     rng = np.random.default_rng(7)
     for seed in range(5):
         rewards, summary = _run(env, list(rng.uniform(-1, 1, 20)), seed=seed)
         objective = summary["implementation_shortfall_bps"] + summary["risk_penalty_bps"]
         assert summary["objective_bps"] == pytest.approx(objective)
-        assert rewards.sum() == pytest.approx(-objective, abs=1e-8)
+        assert rewards.sum() == pytest.approx(-scale * objective, abs=1e-10)
 
 
 def test_without_risk_aversion_rewards_sum_to_minus_shortfall():
-    ec = ExecutionConfig(reward=RewardConfig(risk_aversion=0.0))
+    ec = ExecutionConfig(reward=RewardConfig(risk_aversion=0.0, reward_scale=1.0))
     rewards, summary = _run(ExecutionEnv(MarketConfig(), ec), [0.0])
     assert summary["risk_penalty_bps"] == 0.0
     assert rewards.sum() == pytest.approx(-summary["implementation_shortfall_bps"], abs=1e-8)
 
 
-def test_reward_scale_scales_every_reward():
-    base, _ = _run(ExecutionEnv(), [0.2, -0.3])
-    ec = ExecutionConfig(reward=RewardConfig(reward_scale=0.1))
-    scaled, _ = _run(ExecutionEnv(MarketConfig(), ec), [0.2, -0.3])
-    assert np.allclose(scaled, 0.1 * base)
+def test_reward_scale_only_changes_units():
+    raw = ExecutionConfig(reward=RewardConfig(reward_scale=1.0))
+    base, summary = _run(ExecutionEnv(MarketConfig(), raw), [0.2, -0.3])
+    scaled, scaled_summary = _run(ExecutionEnv(), [0.2, -0.3])  # default scale 0.01
+    assert np.allclose(scaled, 0.01 * base)
+    assert scaled_summary["objective_bps"] == pytest.approx(summary["objective_bps"])
 
 
 def test_risk_penalty_is_the_ac_variance_term_for_twap():

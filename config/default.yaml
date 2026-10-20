@@ -53,4 +53,4 @@ execution:
   latency_steps: 0.0          # > 0: fills land part-way into the step (Brownian bridge)
   reward:
     risk_aversion: 1.4e-3     # lambda per bps^2 of carried variance (AC kappa*T ~2.5)
-    reward_scale: 1.0         # reward units per bps of objective
+    reward_scale: 0.01        # reward units per bps of objective (1 unit = 100 bps)

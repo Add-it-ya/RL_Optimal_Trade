@@ -6,6 +6,33 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed: training (roadmap Phase 2)
+- **Checkpoint selection on validation seeds.** Every `eval_every` env steps (default 100k)
+  and once before training, the deterministic policy is scored on `val_episodes` (default
+  1,000) episodes from the validation block (seeds from 1,000,000; antithetic pairs for a
+  fixed market). The best weights are the ones saved. Each run folder gains `val_curve.csv`,
+  and `provenance.json` records the selected step and the untrained, selected and final
+  validation objectives. Test seeds (from 2,000,000) stay untouched until `rlx evaluate`.
+- **PPO** trains on a `DummyVecEnv` of `n_envs` environments (default 16; ~3x the
+  single-env throughput, and faster than subprocess workers for this cheap environment),
+  with `gamma = 1`, `log_std_init = -1` (initial action noise ~0.37 around the TWAP pace
+  rather than 1.0), a learning rate decaying linearly from 3e-4, and 256 steps per env per
+  rollout. Sub-environment seeds are spread `1000` apart per training seed so seeds never
+  share episodes.
+- **DoubleDQN**: `gamma = 1`, Polyak target updates (`tau = 0.005`) instead of hard copies,
+  learning rate 5e-4, a 200k buffer, batch 256, 5k warm-up steps and epsilon annealed over
+  the first 30% of training.
+- **Rewards are O(1)**: `reward_scale` now defaults to 0.01 (one unit per 100 bps). In raw
+  bps the value loss dominated PPO's jointly clipped gradient.
+- `RunConfig` gains `n_envs`, `eval_every`, `val_episodes` and `val_base_seed` (replacing
+  the unused `eval_episodes` / `eval_base_seed`), and the default budget is 2M steps.
+  `rlx train` gains `--n-envs`, `--eval-every` and `--val-episodes`.
+- `train_agent` returns a `TrainingResult` (agent, per-episode log with the objective,
+  validation curve, selected step); `train_log.csv` records env steps, return and objective.
+- **Report**: an `n_degenerate` column counts trained seeds whose policy trades in fewer
+  than 5 effective steps, and a "Checkpoint selection" table plus validation-curve figure
+  show what each run kept.
+
 ### Changed: the problem formulation (roadmap Phase 1)
 - **Calibrated market defaults** so impact and price risk trade off: per-step volatility
   0.004 (was 0.02), temporary impact 1.5e-4 (was 1e-5), permanent impact 2e-5 (was 5e-6),

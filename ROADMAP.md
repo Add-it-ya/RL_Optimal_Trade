@@ -11,10 +11,18 @@
 
 ## Where things stand (v0.2)
 
-**Phase 1 is done** (see below): the calibrated market, the exact objective, the
-TWAP-relative action, the cleaner observation and the null baselines are in, pinned by
-tests. The agents' *training setup* has not changed yet: a short PPO run with the old
-settings still ends up worse than TWAP, its own starting point. That is Phase 2.
+**Phases 1 and 2 are done** (see below). Phase 1 brought the calibrated market, the exact
+objective, the TWAP-relative action, the cleaner observation and the null baselines.
+Phase 2 brought vectorised PPO, DoubleDQN fixes, O(1) rewards and checkpoint selection on
+validation seeds. First evidence that training now works, on the signal-free
+`abm_ac_optimal` regime with the default 2M-step budget: four PPO runs reached a validation
+objective of 29.1–29.6 bps against 28.9 for the Almgren-Chriss optimum and 32.8 for TWAP
+(their untrained starting point), closing 82–95% of the gap. Phase 3's E1 test (ten seeds,
+test seeds, schedule distance to AC) is what will confirm or refute it. DoubleDQN does not
+learn yet: in two 400k-step probes every later checkpoint scored worse than the untrained
+network (33–66 bps), so selection kept step 0. The likely cause is that the value gaps
+between neighbouring TWAP multipliers are tiny next to the reward noise, so the greedy
+action flips with estimation error. Tuning it is open work before E1.
 
 The lean core is done: Brownian-only market dynamics, PPO and DQN / Double DQN, one
 `rlx train | evaluate | report` command line, and run folders whose weights are pinned by a
@@ -98,8 +106,8 @@ them.
 
 ## Phase 2: train properly
 
-- PPO with 8–16 vectorised envs, γ = 1, a hand-scaled observation and reward, 2–5M steps per
-  seed. DoubleDQN with γ = 1, Polyak target updates and 1–2M steps.
+- PPO with 16 vectorised envs in one process, γ = 1, a hand-scaled observation and reward,
+  2M steps per seed (~5 minutes on one core). DoubleDQN with γ = 1 and Polyak target updates.
 - **Ten training seeds** per configuration; the training seed is the unit of analysis.
 - **Three disjoint seed blocks**: training, validation (checkpoint selection), and test
   (touched only by `rlx evaluate`).

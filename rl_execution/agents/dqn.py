@@ -5,12 +5,17 @@ from the vanilla DQN ``max_a' Q_target(s', a')`` to the Double-DQN decoupled for
 ``Q_target(s', argmax_a' Q_online(s', a'))`` (van Hasselt et al., 2016), which reduces the
 maximisation bias of Q-learning.
 
-Only a discrete action space is supported (one Q-value per discrete inventory fraction).
+Only a discrete action space is supported (one Q-value per TWAP multiplier).
+
+Defaults suit the execution task: the horizon is finite and the time left is part of the
+observation, so ``gamma = 1`` (no discounting of costs that are certain to arrive), and the
+target network tracks the online one by Polyak averaging rather than periodic hard copies.
 """
 
 from __future__ import annotations
 
-from typing import Optional
+import copy
+from typing import Any, Callable, Dict, Optional
 
 import numpy as np
 
@@ -50,16 +55,16 @@ class DQNAgent(BaseAgent):
         env,
         double: bool = False,
         hidden=(64, 64),
-        lr: float = 1e-3,
-        gamma: float = 0.99,
-        buffer_size: int = 100_000,
-        batch_size: int = 128,
-        learning_starts: int = 1_000,
+        lr: float = 5e-4,
+        gamma: float = 1.0,
+        buffer_size: int = 200_000,
+        batch_size: int = 256,
+        learning_starts: int = 5_000,
         train_freq: int = 1,
-        target_update_interval: int = 500,
+        tau: float = 0.005,
         eps_start: float = 1.0,
         eps_end: float = 0.05,
-        eps_fraction: float = 0.5,
+        eps_fraction: float = 0.3,
         max_grad_norm: float = 10.0,
         device: str = "cpu",
         seed: Optional[int] = None,
@@ -74,7 +79,7 @@ class DQNAgent(BaseAgent):
         self.batch_size = batch_size
         self.learning_starts = learning_starts
         self.train_freq = train_freq
-        self.target_update_interval = target_update_interval
+        self.tau = tau
         self.eps_start = eps_start
         self.eps_end = eps_end
         self.eps_fraction = eps_fraction
@@ -113,11 +118,26 @@ class DQNAgent(BaseAgent):
             q = self.q(x)
             return int(torch.argmax(q, dim=1).item())
 
+    # ------------------------------------------------------------------ weights
+    def get_weights(self) -> Dict[str, Any]:
+        """A detached copy of the online network's weights (for checkpoint selection)."""
+        return copy.deepcopy(self.q.net.state_dict())
+
+    def set_weights(self, weights: Dict[str, Any]) -> None:
+        self.q.net.load_state_dict(weights)
+        self.q_target.net.load_state_dict(weights)
+
     # ------------------------------------------------------------------ training
-    def train(self, total_timesteps: int, progress: bool = False, **kwargs) -> "DQNAgent":
+    def train(
+        self,
+        total_timesteps: int,
+        progress: bool = False,
+        callback: Optional[Callable[[int], None]] = None,
+        **kwargs,
+    ) -> "DQNAgent":
+        """Train for ``total_timesteps`` env steps; ``callback(step)`` runs after each one."""
         env = self.env
         obs, _ = env.reset()
-        ep_reward = 0.0
 
         iterator = range(int(total_timesteps))
         if progress:
@@ -129,25 +149,21 @@ class DQNAgent(BaseAgent):
                 pass
 
         for step in iterator:
-            eps = self._epsilon(step, total_timesteps)
-            if self.rng.random() < eps:
+            if self.rng.random() < self._epsilon(step, total_timesteps):
                 action = int(self.rng.integers(0, self.n_actions))
             else:
                 action = self.predict(obs, deterministic=True)
 
             next_obs, reward, terminated, truncated, _ = env.step(action)
-            done = terminated or truncated
             self.buffer.add(obs, action, reward, next_obs, terminated)
-            ep_reward += reward
             obs = next_obs
-            if done:
+            if terminated or truncated:
                 obs, _ = env.reset()
-                ep_reward = 0.0
 
             if step >= self.learning_starts and step % self.train_freq == 0:
                 self._update()
-            if step % self.target_update_interval == 0:
-                self.q_target.net.load_state_dict(self.q.net.state_dict())
+            if callback is not None:
+                callback(step + 1)
 
         return self
 
@@ -176,6 +192,11 @@ class DQNAgent(BaseAgent):
         self.optimizer.step()
         self.train_log.append(float(loss.item()))
 
+        # Polyak averaging: the target trails the online network smoothly
+        with torch.no_grad():
+            for target_p, online_p in zip(self.q_target.net.parameters(), self.q.net.parameters()):
+                target_p.mul_(1.0 - self.tau).add_(online_p, alpha=self.tau)
+
     # ------------------------------------------------------------------ io
     def save(self, path: str) -> None:
         torch = _torch()
@@ -195,6 +216,5 @@ class DQNAgent(BaseAgent):
         torch = _torch()
         ckpt = torch.load(path, map_location="cpu", weights_only=False)
         agent = cls(env, double=ckpt["double"], hidden=tuple(ckpt["hidden"]))
-        agent.q.net.load_state_dict(ckpt["state_dict"])
-        agent.q_target.net.load_state_dict(ckpt["state_dict"])
+        agent.set_weights(ckpt["state_dict"])
         return agent

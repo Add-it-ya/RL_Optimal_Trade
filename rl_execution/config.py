@@ -189,10 +189,15 @@ class RewardConfig:
     Almgren-Chriss baseline uses the same ``risk_aversion`` (converted by
     :func:`ac_risk_aversion`), so in a signal-free arithmetic-Brownian market its schedule
     is the optimum of exactly this objective.
+
+    ``reward_scale`` only sets the units the agents see.  At the default of 0.01 (one reward
+    unit per 100 bps) an episode's return has a standard deviation of about one; in raw bps
+    a value loss in the thousands would dominate PPO's jointly clipped gradient and starve
+    the policy update.  Every reported number uses ``objective_bps``, which is unscaled.
     """
 
     risk_aversion: float = 1.4e-3  # lambda per bps^2 of carried variance (AC kappa*T ~2.5)
-    reward_scale: float = 1.0  # reward units per bps of objective
+    reward_scale: float = 0.01  # reward units per bps of objective (1 unit = 100 bps)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -269,15 +274,17 @@ class RunConfig:
     agent_kwargs: Dict[str, Any] = field(default_factory=dict)
 
     # --- training schedule ---
-    timesteps: int = 80_000
+    timesteps: int = 2_000_000
     randomized: bool = True
     regime: Optional[str] = None
     seed: int = 0
     device: str = "cpu"
+    n_envs: int = 16  # PPO steps this many environments per update; DQN uses one
 
-    # --- evaluation ---
-    eval_episodes: int = 100
-    eval_base_seed: int = 10_000
+    # --- checkpoint selection on validation seeds (never the test seeds) ---
+    eval_every: int = 100_000  # score the policy every this many env steps
+    val_episodes: int = 1_000  # validation episodes per score
+    val_base_seed: int = 1_000_000  # first validation seed
 
     # --- market + execution task ---
     market: MarketConfig = field(default_factory=MarketConfig)
@@ -302,8 +309,10 @@ class RunConfig:
             "regime": self.regime,
             "seed": self.seed,
             "device": self.device,
-            "eval_episodes": self.eval_episodes,
-            "eval_base_seed": self.eval_base_seed,
+            "n_envs": self.n_envs,
+            "eval_every": self.eval_every,
+            "val_episodes": self.val_episodes,
+            "val_base_seed": self.val_base_seed,
             "market": self.market.to_dict(),
             "execution": self.execution.to_dict(),
             "experiment": self.experiment,
@@ -326,7 +335,9 @@ class RunConfig:
             "agent in {ppo, dqn, doubledqn}": self.agent.lower() in {"ppo", "dqn", "doubledqn"},
             "timesteps > 0": self.timesteps > 0,
             "seed >= 0": self.seed >= 0,
-            "eval_episodes > 0": self.eval_episodes > 0,
+            "n_envs >= 1": self.n_envs >= 1,
+            "eval_every > 0": self.eval_every > 0,
+            "val_episodes >= 2": self.val_episodes >= 2,
             "0 <= imbalance_alpha <= 1": 0.0 <= m.imbalance_alpha <= 1.0,
             "0 <= imbalance_persistence < 1": 0.0 <= m.imbalance_persistence < 1.0,
             "volatility >= 0": m.volatility >= 0.0,

@@ -48,6 +48,13 @@ class BaseAgent:
     def predict(self, obs: np.ndarray, deterministic: bool = True):
         raise NotImplementedError
 
+    def get_weights(self) -> Any:
+        """A detached copy of the policy weights (used to keep the best checkpoint)."""
+        raise NotImplementedError
+
+    def set_weights(self, weights: Any) -> None:
+        raise NotImplementedError
+
     def save(self, path: str) -> None:
         raise NotImplementedError
 

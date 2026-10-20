@@ -54,6 +54,7 @@ def test_comparison_table_pairs_episodes_and_aggregates_seeds():
     assert table.loc["PPO", "vs_TWAP"] == pytest.approx(-6.0)
     assert table.loc["PPO", "ci_low"] <= -6.0 <= table.loc["PPO", "ci_high"]
     assert table.loc["TWAP", "n_seeds"] == "—"
+    assert table.loc["PPO", "n_degenerate"] == 0  # no effective_steps column -> not flagged
     assert np.isnan(table.loc["TWAP", "p_value"])
 
 
@@ -62,9 +63,12 @@ def test_train_evaluate_report_end_to_end(tmp_path):
     runs, results = tmp_path / "runs", tmp_path / "results"
     train = ["train", "--agent", "doubledqn", "--timesteps", "300", "--seeds", "0-1"]
     train += ["--regime", "abm_ac_optimal", "--experiment", "t", "--runs-dir", str(runs)]
+    train += ["--eval-every", "150", "--val-episodes", "10"]
     main(train)
     seed0 = runs / "t" / "DoubleDQN" / "seed_0"
     assert (seed0 / "provenance.json").exists()
+    val_curve = pd.read_csv(seed0 / "val_curve.csv")
+    assert list(val_curve["step"]) == [0, 150, 300]
 
     # re-running skips completed seeds instead of retraining them
     before = (seed0 / "model.pt").stat().st_mtime_ns
@@ -87,3 +91,5 @@ def test_train_evaluate_report_end_to_end(tmp_path):
     assert "## abm_ac_optimal" in report and "DoubleDQN" in report
     assert "vs_AlmgrenChriss" in report and "J_bps" in report
     assert "SignalRule coefficient fitted on validation seeds" in report
+    assert "## Checkpoint selection" in report and "n_degenerate" in report
+    assert (results / "figures" / "validation_curves.png").exists()

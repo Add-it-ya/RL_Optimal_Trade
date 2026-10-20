@@ -108,6 +108,33 @@ def plot_training_curve(
     return fig
 
 
+def plot_validation_curves(
+    curves: Mapping[str, pd.DataFrame],
+    references: Optional[Mapping[str, float]] = None,
+    save: Optional[str] = None,
+):
+    """Validation objective against training steps, one line per run.
+
+    ``curves`` maps a run name to a frame with ``step`` and ``objective_bps`` columns;
+    ``references`` optionally adds horizontal lines (e.g. the TWAP and Almgren-Chriss
+    objectives) to show what "good" looks like.
+    """
+    set_style()
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for name, df in curves.items():
+        ax.plot(df["step"], df["objective_bps"], marker="o", ms=3, label=name)
+    for name, value in (references or {}).items():
+        ax.axhline(value, ls="--", lw=1, color="0.4")
+        ax.annotate(name, (0, value), textcoords="offset points", xytext=(2, 3), fontsize=8)
+    ax.set_xlabel("Training steps")
+    ax.set_ylabel("Validation objective (bps, lower is better)")
+    ax.set_title("Checkpoint selection on validation seeds")
+    ax.legend(fontsize=8)
+    if save:
+        save_fig(fig, save)
+    return fig
+
+
 # --------------------------------------------------------------------------- comparisons
 def plot_risk_vs_cost(summary: pd.DataFrame, save: Optional[str] = None):
     """Mean implementation shortfall against its standard deviation, one point per strategy.

@@ -39,7 +39,7 @@ pip install -e ".[rl,dev]"
 Train, evaluate on held-out test seeds, and write a report:
 
 ```bash
-rlx train --agent ppo --timesteps 200000 --seeds 0-4 --regime abm_ac_optimal --experiment e1
+rlx train --agent ppo --seeds 0-9 --regime abm_ac_optimal --experiment e1
 ```
 ```bash
 rlx evaluate --experiment e1 --episodes 2000 --antithetic
@@ -53,8 +53,27 @@ rlx report --experiment e1
 - `rlx evaluate` scores every run of the experiment plus the baselines on a block of test
   seeds that training never sees, and writes `results/<experiment>/` (per-episode CSV, summary,
   figures).
-- `rlx report` turns that into `results/<experiment>/REPORT.md`: IS level and spread per
-  strategy, the paired gap to TWAP with a 95% CI, and Holm-adjusted p-values.
+- `rlx report` turns that into `results/<experiment>/REPORT.md`: the objective, the level,
+  spread and tail of implementation shortfall, the paired gap to Almgren-Chriss with a 95% CI
+  across training seeds, Holm-adjusted p-values, a degenerate-policy count, and which
+  checkpoint each run kept.
+
+### How training works
+
+- **Budget and speed.** The default is 2M environment steps per seed. PPO steps 16
+  environments in one process (`--n-envs`), at roughly 6–7k steps/s on one CPU core, so
+  about five minutes per seed. Subprocess workers are slower here: the environment is cheap
+  and inter-process overhead dominates. Run seeds in parallel as separate processes instead.
+- **Three disjoint seed blocks.** Training draws its own episodes; **validation** seeds start
+  at 1,000,000 and are used only to pick checkpoints; **test** seeds start at 2,000,000 and
+  are touched only by `rlx evaluate`.
+- **Checkpoint selection.** Every `--eval-every` steps (default 100k), and once before
+  training, the deterministic policy is scored on `--val-episodes` (default 1,000)
+  validation episodes. The weights with the lowest mean objective are the ones saved.
+  `val_curve.csv` in each run folder shows the whole curve, including whether training
+  improved on the untrained policy at all.
+- **Rewards are O(1).** `reward_scale` is 0.01 (one unit per 100 bps); reported numbers use
+  the unscaled `objective_bps`.
 
 `rlx train --config run.yaml` accepts a full `RunConfig` in YAML (see `config/default.yaml` for
 the market and execution sections); explicit flags override it.
@@ -140,8 +159,9 @@ python scripts/brownian_demo.py          # paths, QQ-plot, vol clustering, quadr
 
 The policies are small MLPs and the environment step runs on the CPU, so for this code a
 machine's **CPU cores** matter more than its GPU: run several seeds in parallel, one process
-each, with `OMP_NUM_THREADS=1` so they don't fight over threads. A CUDA build of PyTorch is
-only needed for GPU work:
+each (`rlx train --seeds 3`, `--seeds 4`, ...; completed seeds are skipped), with
+`OMP_NUM_THREADS=1` so they don't fight over threads. A CUDA build of PyTorch is only
+needed for GPU work:
 
 ```bash
 nvidia-smi

@@ -42,6 +42,10 @@ from rl_execution.utils.warnings import configure_cli_warnings
 #: they never land on these explicit evaluation seeds.
 TEST_BASE_SEED = 2_000_000
 
+#: A trained seed whose policy trades in fewer effective steps than this (inverse
+#: Herfindahl of its schedule; TWAP = horizon, one block trade = 1) is flagged degenerate.
+DEGENERATE_EFFECTIVE_STEPS = 5.0
+
 
 def parse_seeds(spec: str) -> List[int]:
     """``"3"`` -> [3]; ``"0-4"`` -> [0, 1, 2, 3, 4]; ``"0,2,7"`` -> [0, 2, 7]."""
@@ -79,6 +83,9 @@ def _train_config(args) -> RunConfig:
         rc.regime, rc.randomized = None, True
     if args.experiment is not None:
         rc.experiment = args.experiment
+    for flag in ("n_envs", "eval_every", "val_episodes"):
+        if getattr(args, flag) is not None:
+            setattr(rc, flag, getattr(args, flag))
     rc.device = args.device or rc.device
     return rc.validate()
 
@@ -96,10 +103,15 @@ def cmd_train(args) -> None:
             continue
         print(f"train  {DISPLAY_NAMES[rc.agent]} seed={seed} {rc.timesteps:,} steps on {market}")
         t0 = time.time()
-        agent, log = train_run(rc, progress=args.progress)
-        save_run(agent, rc, out, log)
-        tail = float(np.mean(log[-100:])) if log else float("nan")
-        print(f"       done in {time.time() - t0:.0f}s, mean return (last 100 eps) {tail:.2f}")
+        result = train_run(rc, progress=args.progress)
+        save_run(result, rc, out)
+        selected = result.selected()
+        assert selected is not None  # train_run always selects on validation seeds
+        print(
+            f"       done in {time.time() - t0:.0f}s; validation objective "
+            f"{result.validation[0]['objective_bps']:.2f} bps untrained -> "
+            f"{selected['objective_bps']:.2f} bps at step {result.selected_step:,} (selected)"
+        )
         print(f"       -> {out}")
 
 
@@ -286,18 +298,23 @@ def comparison_table(
         bench_m = column(bench, metric)
         for agent, grp in reg.groupby("agent", sort=False):
             per_seed_gap = []
+            n_degenerate = 0
             last_m: np.ndarray = np.empty(0)
             for _, run in grp.groupby("strategy", sort=False):
                 m = column(run, metric)
                 n = min(m.size, bench_m.size)
                 per_seed_gap.append(float(np.mean(m[:n] - bench_m[:n])))
                 last_m = m[:n]
+                n_degenerate += int(
+                    np.nanmean(column(run, "effective_steps")) < DEGENERATE_EFFECTIVE_STEPS
+                )
             is_bps = column(grp, "implementation_shortfall_bps")
             trained = bool(grp["seed"].notna().any())
             row = {
                 "regime": regime,
                 "strategy": agent,
                 "n_seeds": len(per_seed_gap) if trained else "—",
+                "n_degenerate": n_degenerate if trained else "—",
                 "J_bps": float(np.mean(column(grp, "objective_bps"))),
                 "IS_bps": float(is_bps.mean()),
                 "IS_std": float(is_bps.std(ddof=1)) if is_bps.size > 1 else nan,
@@ -354,12 +371,26 @@ def cmd_report(args) -> None:
     table = comparison_table(episodes, benchmark=args.benchmark, metric=args.metric, block=block)
     table.to_csv(res_dir / "comparison.csv", index=False)
 
-    # training curves, one smoothed line per (agent, seed)
-    curves = {}
-    for log in sorted(Path(meta["runs_dir"]).glob("*/seed_*/train_log.csv")):
-        curves[f"{log.parent.parent.name}/{log.parent.name}"] = pd.read_csv(log)["return"]
+    # validation curves and the checkpoint each run kept (validation seeds, not test seeds)
+    curves, selection = {}, []
+    for run in meta.get("runs", []):
+        run_path = Path(run["run_dir"])
+        if (run_path / "val_curve.csv").exists():
+            curves[run["strategy"]] = pd.read_csv(run_path / "val_curve.csv")
+        prov = load_json(run_path / "provenance.json") if run_path.exists() else {}
+        if "selected_step" in prov:
+            selection.append(
+                {
+                    "run": run["strategy"],
+                    "J_untrained": prov["initial_val_objective_bps"],
+                    "J_selected": prov["selected_val_objective_bps"],
+                    "selected_step": f"{prov['selected_step']:,}",
+                    "J_final": prov["final_val_objective_bps"],
+                }
+            )
     if curves:
-        viz.plot_training_curve(curves, save=str(res_dir / "figures" / "training_curves.png"))
+        ensure_dir(res_dir / "figures")
+        viz.plot_validation_curves(curves, save=str(res_dir / "figures" / "validation_curves.png"))
 
     shas = sorted({r["git_sha"] for r in meta.get("runs", []) if r.get("git_sha")})
     parts = [
@@ -375,9 +406,13 @@ def cmd_report(args) -> None:
         f"- `vs_{args.benchmark}` is the mean paired difference in `{args.metric}` (negative = "
         f"better than {args.benchmark}). For multi-seed agents the 95% CI and p-value are "
         "across training seeds; `p_holm` is Holm-adjusted over every row of every table.",
+        f"- `n_degenerate` counts trained seeds whose policy trades in fewer than "
+        f"{DEGENERATE_EFFECTIVE_STEPS:g} effective steps -- a block trade, not an execution "
+        "schedule. They are reported, never dropped.",
         "",
     ]
-    cols = ["strategy", "n_seeds", "J_bps", "IS_bps", "IS_std", "IS_p95", "eff_steps"]
+    cols = ["strategy", "n_seeds", "n_degenerate", "J_bps", "IS_bps", "IS_std", "IS_p95"]
+    cols += ["eff_steps"]
     cols += [f"vs_{args.benchmark}", "ci_low", "ci_high", "p_holm"]
     fitted = meta.get("params", {})
     for regime, sub in table.groupby("regime", sort=False):
@@ -389,8 +424,19 @@ def cmd_report(args) -> None:
             if (res_dir / "figures" / f"{regime}_{fig}.png").exists():
                 parts.append(f"![{regime} {fig}](figures/{regime}_{fig}.png)")
         parts.append("")
+    if selection:
+        parts += [
+            "## Checkpoint selection",
+            "",
+            "Mean objective (bps) on the validation seeds before training, at the checkpoint "
+            "each run kept, and at the end of training. The test seeds above were never used "
+            "for selection.",
+            "",
+            _markdown_table(pd.DataFrame(selection)),
+            "",
+        ]
     if curves:
-        parts += ["## Training curves", "", "![training curves](figures/training_curves.png)", ""]
+        parts += ["![validation curves](figures/validation_curves.png)", ""]
     (res_dir / "REPORT.md").write_text("\n".join(parts), encoding="utf-8")
     print(f"Wrote {res_dir / 'REPORT.md'} and comparison.csv")
 
@@ -410,6 +456,11 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--experiment", default=None, help="groups runs under runs/<experiment>/")
     t.add_argument("--runs-dir", default=str(RUNS_DIR))
     t.add_argument("--device", default=None, choices=["cpu", "cuda", "auto"])
+    t.add_argument("--n-envs", type=int, default=None, help="PPO environments (default 16)")
+    t.add_argument(
+        "--eval-every", type=int, default=None, help="validation scoring interval in env steps"
+    )
+    t.add_argument("--val-episodes", type=int, default=None, help="episodes per validation score")
     t.add_argument("--side", default="sell", choices=["buy", "sell"])
     t.add_argument("--inventory", type=float, default=10_000.0)
     t.add_argument("--horizon", type=int, default=20)
