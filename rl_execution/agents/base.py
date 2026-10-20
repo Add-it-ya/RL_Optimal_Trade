@@ -13,11 +13,12 @@ backtest engine alongside the classical baselines.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import numpy as np
 
 from rl_execution.baselines.base import BaseStrategy
+from rl_execution.config import ActionType
 
 
 def resolve_device(device: str = "cpu") -> str:
@@ -41,6 +42,8 @@ class BaseAgent:
     """Abstract model-free RL agent."""
 
     name: str = "agent"
+    #: The action space the agent emits actions in (``None``: not declared).
+    action_type: Optional[ActionType] = None
 
     def train(self, total_timesteps: int, **kwargs) -> "BaseAgent":
         raise NotImplementedError
@@ -72,6 +75,17 @@ class AgentStrategy(BaseStrategy):
         self.name = str(name or getattr(agent, "name", agent.__class__.__name__))
 
     def reset(self, env) -> None:
+        # A discrete agent's action index fed to a continuous env is silently clipped to
+        # "liquidate now" (and vice versa), so a mismatch must fail, not just score badly.
+        expected = getattr(self.agent, "action_type", None)
+        discrete = getattr(env, "discrete", None)
+        if expected is not None and discrete is not None:
+            if discrete != (expected is ActionType.DISCRETE):
+                raise ValueError(
+                    f"{self.name} acts in the {expected.value} action space but the env is "
+                    f"{'discrete' if discrete else 'continuous'}; build the env with "
+                    "rl_execution.agents.required_action_type(<agent name>)."
+                )
         super().reset(env)
 
     def act(self, obs: np.ndarray, info: Dict[str, Any]):

@@ -27,12 +27,17 @@ import argparse
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 
-from rl_execution.agents import DISPLAY_NAMES, AgentStrategy, normalize_agent_name
+from rl_execution.agents import (
+    DISPLAY_NAMES,
+    AgentStrategy,
+    normalize_agent_name,
+    required_action_type,
+)
 from rl_execution.config import ActionType, ExecutionConfig, RunConfig, Side
 from rl_execution.utils.config_io import load_run_config
 from rl_execution.utils.io import RESULTS_DIR, RUNS_DIR, ensure_dir, load_json, save_json
@@ -45,6 +50,9 @@ TEST_BASE_SEED = 2_000_000
 #: A trained seed whose policy trades in fewer effective steps than this (inverse
 #: Herfindahl of its schedule; TWAP = horizon, one block trade = 1) is flagged degenerate.
 DEGENERATE_EFFECTIVE_STEPS = 5.0
+
+#: The schedule ``L1_vs_AC`` is measured against: the closed-form optimum of the reward.
+SCHEDULE_REFERENCE = "AlmgrenChriss"
 
 
 def parse_seeds(spec: str) -> List[int]:
@@ -129,13 +137,15 @@ def _load_runs(runs_root: Path):
         agent, rc = load_run(d)
         name = f"{DISPLAY_NAMES[normalize_agent_name(rc.agent)]}/s{rc.seed}"
         strategies[name] = AgentStrategy(agent, name)
-        action_types[name] = rc.execution.action_type
+        # train_run builds the env from the agent type; config.yaml keeps the CLI default
+        action_types[name] = required_action_type(rc.agent)
         prov = load_json(d / "provenance.json")
         meta.append(
             {
                 "strategy": name,
                 "run_dir": str(d),
                 "git_sha": prov.get("git_sha"),
+                "git_dirty": prov.get("git_dirty"),
                 "weights_sha256": prov.get("weights_sha256"),
             }
         )
@@ -153,14 +163,61 @@ def _seed_of(strategy: str) -> float:
     return float(strategy.split("/s")[1]) if "/s" in strategy else float("nan")
 
 
+def schedules_frame(results) -> pd.DataFrame:
+    """Mean schedule of every (regime, strategy), as the fraction of the order per step.
+
+    Episodes that finish early are zero-padded (see ``normalised_schedule``), so one
+    strategy's fractions sum to the share of the order it executed: 1 for a full fill.
+    """
+    from rl_execution.backtest import normalised_schedule
+
+    rows = []
+    for regime, by_strat in results.items():
+        for name, res in by_strat.items():
+            for step, fraction in enumerate(normalised_schedule(res)):
+                rows.append(
+                    {
+                        "regime": regime,
+                        "strategy": name,
+                        "agent": _agent_of(name),
+                        "seed": _seed_of(name),
+                        "step": step,
+                        "fraction": float(fraction),
+                    }
+                )
+    return pd.DataFrame(rows, columns=["regime", "strategy", "agent", "seed", "step", "fraction"])
+
+
+def schedule_l1(
+    schedules: pd.DataFrame, reference: str = SCHEDULE_REFERENCE
+) -> Dict[Tuple[str, str], float]:
+    """``{(regime, strategy): L1 distance of its mean schedule from the reference's}``."""
+    from rl_execution.backtest import schedule_gap
+
+    def fractions(frame: pd.DataFrame) -> np.ndarray:
+        return frame.sort_values("step")["fraction"].to_numpy(dtype=float)
+
+    out: Dict[Tuple[str, str], float] = {}
+    for regime, reg in schedules.groupby("regime", sort=False):
+        ref = reg[reg["strategy"] == reference]
+        if ref.empty:
+            continue
+        for name, grp in reg.groupby("strategy", sort=False):
+            out[(str(regime), str(name))] = schedule_gap(fractions(grp), fractions(ref))
+    return out
+
+
 def cmd_evaluate(args) -> None:
     from rl_execution import viz
     from rl_execution.backtest import pool_results
     from rl_execution.experiments import (
+        HELD_OUT,
+        IN_DISTRIBUTION,
         build_baselines,
         evaluate_across_regimes,
         list_regimes,
         regime_results_frame,
+        resolve_regimes,
     )
 
     runs_root = Path(args.runs_dir) / args.experiment
@@ -170,7 +227,9 @@ def cmd_evaluate(args) -> None:
     exec_config = replace(exec_config or ExecutionConfig(), action_type=ActionType.CONTINUOUS)
 
     if args.regimes:
-        regimes = list(args.regimes)
+        regimes = resolve_regimes(args.regimes)
+    elif strategies and trained_on == {None}:
+        regimes = IN_DISTRIBUTION + HELD_OUT  # domain-randomised experiments: the E3 split
     elif strategies and None not in trained_on:
         regimes = sorted(trained_on)  # single-regime experiments: evaluate where trained
     else:
@@ -209,11 +268,13 @@ def cmd_evaluate(args) -> None:
                     }
                 )
     pd.DataFrame(rows).to_csv(out / "episodes.csv", index=False)
+    schedules_frame(results).to_csv(out / "schedules.csv", index=False)
     regime_results_frame(results).to_csv(out / "summary.csv", index=False)
     save_json(
         {
             "experiment": args.experiment,
             "runs_dir": str(runs_root),
+            "trained_on": sorted("randomized" if r is None else r for r in trained_on),
             "regimes": regimes,
             "episodes": args.episodes,
             "base_seed": args.base_seed,
@@ -247,16 +308,20 @@ def cmd_evaluate(args) -> None:
         viz.plot_inventory_decay(pooled, save=str(figures / f"{regime}_inventory.png"))
         viz.plot_is_distribution(pooled, save=str(figures / f"{regime}_is_distribution.png"))
         viz.plot_risk_vs_cost(summary, save=str(figures / f"{regime}_risk_vs_cost.png"))
-    print(f"Wrote {out / 'episodes.csv'}, summary.csv, meta.json and figures/")
+    print(f"Wrote {out / 'episodes.csv'}, schedules.csv, summary.csv, meta.json and figures/")
     print(f"Next: rlx report --experiment {args.experiment}")
 
 
 # --------------------------------------------------------------------------- report
 def _pvalue(diffs: np.ndarray) -> float:
     """Two-sided one-sample t-test p-value that ``diffs`` has mean zero."""
+    from rl_execution.backtest.engine import TIE_TOLERANCE
+
     d = np.asarray(diffs, dtype=float)
     if d.size < 2:
         return float("nan")
+    if float(np.max(np.abs(d))) <= TIE_TOLERANCE:
+        return 1.0
     if float(d.std(ddof=1)) == 0.0:
         return 1.0 if np.isclose(d.mean(), 0.0) else 0.0
     from scipy import stats
@@ -270,6 +335,7 @@ def comparison_table(
     metric: str = "objective_bps",
     block: int = 1,
     n_boot: int = 5_000,
+    schedules: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """One row per (regime, agent): objective, IS level / spread / tail, and the paired gap.
 
@@ -280,10 +346,17 @@ def comparison_table(
     are taken across seeds.  A single-seed agent or a baseline falls back to the paired
     episode-level bootstrap (``block=2`` for antithetic pairs).  Columns missing from
     ``episodes`` are reported as NaN.
+
+    ``L1_vs_AC`` is the L1 distance between the strategy's mean schedule and
+    Almgren-Chriss's (see :func:`schedule_l1`; the median across seeds for a multi-seed
+    agent), taken from ``schedules`` -- NaN when that is not given.  A strategy whose every
+    paired difference is within ``TIE_TOLERANCE`` of zero is reported as an exact tie.
     """
+    from rl_execution.backtest.engine import TIE_TOLERANCE
     from rl_execution.metrics.stats import adjust_pvalues, bootstrap_ci, paired_bootstrap_ci
 
     nan = float("nan")
+    l1 = schedule_l1(schedules) if schedules is not None else {}
 
     def column(frame: pd.DataFrame, name: str) -> np.ndarray:
         if name not in frame:
@@ -297,13 +370,16 @@ def comparison_table(
             continue
         bench_m = column(bench, metric)
         for agent, grp in reg.groupby("agent", sort=False):
-            per_seed_gap = []
+            per_seed_gap, per_seed_l1 = [], []
             n_degenerate = 0
+            max_abs_diff = 0.0
             last_m: np.ndarray = np.empty(0)
-            for _, run in grp.groupby("strategy", sort=False):
+            for name, run in grp.groupby("strategy", sort=False):
                 m = column(run, metric)
                 n = min(m.size, bench_m.size)
                 per_seed_gap.append(float(np.mean(m[:n] - bench_m[:n])))
+                max_abs_diff = max(max_abs_diff, float(np.max(np.abs(m[:n] - bench_m[:n]))))
+                per_seed_l1.append(l1.get((str(regime), str(name)), nan))
                 last_m = m[:n]
                 n_degenerate += int(
                     np.nanmean(column(run, "effective_steps")) < DEGENERATE_EFFECTIVE_STEPS
@@ -320,13 +396,19 @@ def comparison_table(
                 "IS_std": float(is_bps.std(ddof=1)) if is_bps.size > 1 else nan,
                 "IS_p95": float(np.quantile(is_bps, 0.95)),
                 "eff_steps": float(np.mean(column(grp, "effective_steps"))),
+                "L1_vs_AC": (
+                    float(np.nanmedian(per_seed_l1)) if not np.all(np.isnan(per_seed_l1)) else nan
+                ),
                 f"vs_{benchmark}": float(np.mean(per_seed_gap)),
                 "ci_low": nan,
                 "ci_high": nan,
                 "p_value": nan,
             }
             if agent != benchmark:
-                if len(per_seed_gap) >= 2:
+                if max_abs_diff <= TIE_TOLERANCE:  # trades identically to the benchmark
+                    row[f"vs_{benchmark}"], row["ci_low"], row["ci_high"] = 0.0, 0.0, 0.0
+                    row["p_value"] = 1.0
+                elif len(per_seed_gap) >= 2:
                     row["ci_low"], row["ci_high"] = bootstrap_ci(per_seed_gap, n_boot=n_boot, rng=0)
                     row["p_value"] = _pvalue(np.asarray(per_seed_gap))
                 else:
@@ -348,28 +430,111 @@ def comparison_table(
     return table
 
 
-def _markdown_table(df: pd.DataFrame) -> str:
-    def fmt(v):
+def split_degradation(
+    episodes: pd.DataFrame,
+    splits: Mapping[str, Sequence[str]],
+    benchmark: str = "AlmgrenChriss",
+    metric: str = "objective_bps",
+    n_boot: int = 5_000,
+) -> pd.DataFrame:
+    """How much each strategy's gap to the benchmark grows out of distribution (E3).
+
+    For every run, the mean paired gap ``metric - metric_benchmark`` of each regime is
+    averaged, one weight per regime, over ``splits["in_distribution"]`` and over
+    ``splits["held_out"]``; ``degradation`` is held-out minus in-distribution, in the
+    metric's units.  For an agent trained on several seeds the columns are means across
+    seeds and the 95% CI of ``degradation`` is taken across seeds; a baseline (one run)
+    gets point values.  Only regimes present in ``episodes`` count.
+    """
+    from rl_execution.metrics.stats import bootstrap_ci
+
+    nan = float("nan")
+    gaps: Dict[str, Dict[str, float]] = {}  # strategy -> {regime: mean paired gap}
+    agent_of, trained = {}, {}
+    for regime, reg in episodes.groupby("regime", sort=False):
+        bench = reg[reg["strategy"] == benchmark].sort_values("episode")[metric]
+        b = bench.to_numpy(dtype=float)
+        if b.size == 0:
+            continue
+        for name, run in reg.groupby("strategy", sort=False):
+            m = run.sort_values("episode")[metric].to_numpy(dtype=float)
+            n = min(m.size, b.size)
+            gaps.setdefault(str(name), {})[str(regime)] = float(np.mean(m[:n] - b[:n]))
+            agent_of[str(name)] = str(run["agent"].iloc[0])
+            trained[str(name)] = bool(run["seed"].notna().any())
+
+    per_agent: Dict[str, List[Tuple[float, float]]] = {}
+    for name, by_regime in gaps.items():
+        inside = [g for r, g in by_regime.items() if r in splits["in_distribution"]]
+        outside = [g for r, g in by_regime.items() if r in splits["held_out"]]
+        if inside and outside:
+            per_agent.setdefault(agent_of[name], []).append(
+                (float(np.mean(inside)), float(np.mean(outside)))
+            )
+
+    rows = []
+    for agent, pairs in per_agent.items():
+        if agent == benchmark:
+            continue
+        ins, outs = np.array([p[0] for p in pairs]), np.array([p[1] for p in pairs])
+        degradation = outs - ins
+        is_trained = any(trained[n] for n in gaps if agent_of[n] == agent)
+        ci = bootstrap_ci(degradation, n_boot=n_boot, rng=0) if len(pairs) >= 2 else (nan, nan)
+        rows.append(
+            {
+                "strategy": agent,
+                "n_seeds": len(pairs) if is_trained else "—",
+                f"vs_{benchmark}_in": float(ins.mean()),
+                f"vs_{benchmark}_held_out": float(outs.mean()),
+                "degradation": float(degradation.mean()),
+                "ci_low": float(ci[0]),
+                "ci_high": float(ci[1]),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _markdown_table(df: pd.DataFrame, decimals: Optional[Dict[str, int]] = None) -> str:
+    """Markdown table; floats get one decimal unless ``decimals`` names the column."""
+    decimals = decimals or {}
+
+    def fmt(v, col):
         if isinstance(v, float):
             if np.isnan(v):
                 return "—"
+            if col in decimals:
+                return f"{v:.{decimals[col]}f}"
             return f"{v:.3g}" if abs(v) < 1e-2 and v != 0 else f"{v:.1f}"
         return str(v)
 
     lines = ["| " + " | ".join(df.columns) + " |", "|" + "---|" * len(df.columns)]
-    lines += ["| " + " | ".join(fmt(v) for v in row) + " |" for row in df.itertuples(index=False)]
+    lines += [
+        "| " + " | ".join(fmt(v, c) for v, c in zip(row, df.columns)) + " |"
+        for row in df.itertuples(index=False)
+    ]
     return "\n".join(lines)
 
 
 def cmd_report(args) -> None:
     from rl_execution import viz
+    from rl_execution.experiments import SPLITS, get_regime, outside_randomized_support
 
     res_dir = Path(args.results) if args.results else RESULTS_DIR / args.experiment
     episodes = pd.read_csv(res_dir / "episodes.csv")
     meta = load_json(res_dir / "meta.json")
     block = 2 if meta.get("antithetic") else 1
-    table = comparison_table(episodes, benchmark=args.benchmark, metric=args.metric, block=block)
+    sched_path = res_dir / "schedules.csv"
+    schedules = pd.read_csv(sched_path) if sched_path.exists() else None
+    table = comparison_table(
+        episodes, benchmark=args.benchmark, metric=args.metric, block=block, schedules=schedules
+    )
     table.to_csv(res_dir / "comparison.csv", index=False)
+    randomized = meta.get("trained_on") == ["randomized"]
+    robustness = (
+        split_degradation(episodes, SPLITS, benchmark=args.benchmark, metric=args.metric)
+        if randomized
+        else pd.DataFrame()
+    )
 
     # validation curves and the checkpoint each run kept (validation seeds, not test seeds)
     curves, selection = {}, []
@@ -393,16 +558,21 @@ def cmd_report(args) -> None:
         viz.plot_validation_curves(curves, save=str(res_dir / "figures" / "validation_curves.png"))
 
     shas = sorted({r["git_sha"] for r in meta.get("runs", []) if r.get("git_sha")})
+    n_dirty = sum(bool(r.get("git_dirty")) for r in meta.get("runs", []))
     parts = [
         f"# Results: `{meta['experiment']}`",
         "",
         f"- Test episodes per strategy: {meta['episodes']} (seeds from {meta['base_seed']:,}"
         f"{', antithetic pairs' if block == 2 else ''})",
         f"- Trained runs: {len(meta.get('runs', []))}; code version(s): "
-        + (", ".join(s[:10] for s in shas) or "n/a"),
+        + (", ".join(s[:10] for s in shas) or "n/a")
+        + (f" ({n_dirty} trained with uncommitted changes)" if n_dirty else ""),
         "- `J_bps` is the objective the agents are rewarded on: implementation shortfall plus "
         "the Almgren-Chriss penalty on carried variance (lower is better). `eff_steps` is how "
         "many steps the order is effectively spread over (20 = TWAP, 1 = one block trade).",
+        "- `L1_vs_AC` is the L1 distance between the strategy's mean schedule (fraction of the "
+        "order traded at each step) and Almgren-Chriss's: 0 = the same shape, 2 = disjoint. "
+        "For multi-seed agents it is the median across seeds.",
         f"- `vs_{args.benchmark}` is the mean paired difference in `{args.metric}` (negative = "
         f"better than {args.benchmark}). For multi-seed agents the 95% CI and p-value are "
         "across training seeds; `p_holm` is Holm-adjusted over every row of every table.",
@@ -412,18 +582,56 @@ def cmd_report(args) -> None:
         "",
     ]
     cols = ["strategy", "n_seeds", "n_degenerate", "J_bps", "IS_bps", "IS_std", "IS_p95"]
-    cols += ["eff_steps"]
+    cols += ["eff_steps", "L1_vs_AC"]
     cols += [f"vs_{args.benchmark}", "ci_low", "ci_high", "p_holm"]
+    # E1 is judged on sub-bps gaps and an L1 bar of 0.10: print enough digits to read them
+    precise = {c: 2 for c in ("J_bps", f"vs_{args.benchmark}", "ci_low", "ci_high")}
+    precise["L1_vs_AC"] = 3
     fitted = meta.get("params", {})
-    for regime, sub in table.groupby("regime", sort=False):
-        parts += [f"## {regime}", "", _markdown_table(sub[cols].sort_values("J_bps")), ""]
-        beta = fitted.get(regime, {}).get("SignalRule", {}).get("beta")
-        if beta is not None:
-            parts += [f"SignalRule coefficient fitted on validation seeds: beta = {beta}.", ""]
-        for fig in ("schedule", "risk_vs_cost", "is_distribution"):
-            if (res_dir / "figures" / f"{regime}_{fig}.png").exists():
-                parts.append(f"![{regime} {fig}](figures/{regime}_{fig}.png)")
-        parts.append("")
+    regimes = list(dict.fromkeys(table["regime"])) if not table.empty else []
+    if randomized:  # E3: in-distribution and held-out regimes reported separately
+        rest = [r for r in regimes if r not in SPLITS["in_distribution"] + SPLITS["held_out"]]
+        sections = [
+            ("In distribution", [r for r in regimes if r in SPLITS["in_distribution"]]),
+            ("Held out", [r for r in regimes if r in SPLITS["held_out"]]),
+            ("Other regimes", rest),
+        ]
+    else:
+        sections = [("", regimes)]
+    for label, members in sections:
+        if not members:
+            continue
+        heading = "###" if label else "##"
+        if label:
+            parts += [f"## {label}", ""]
+        for regime in members:
+            sub = table[table["regime"] == regime]
+            title = regime
+            axes = outside_randomized_support(get_regime(regime)) if randomized else []
+            if axes:
+                title += f" (outside the training family on: {', '.join(axes)})"
+            table_md = _markdown_table(sub[cols].sort_values("J_bps"), decimals=precise)
+            parts += [f"{heading} {title}", "", table_md]
+            parts.append("")
+            beta = fitted.get(regime, {}).get("SignalRule", {}).get("beta")
+            if beta is not None:
+                parts += [f"SignalRule coefficient fitted on validation seeds: beta = {beta}.", ""]
+            for fig in ("schedule", "risk_vs_cost", "is_distribution"):
+                if (res_dir / "figures" / f"{regime}_{fig}.png").exists():
+                    parts.append(f"![{regime} {fig}](figures/{regime}_{fig}.png)")
+            parts.append("")
+    if not robustness.empty:
+        parts += [
+            "## Robustness: in distribution vs held out",
+            "",
+            f"Mean paired gap to {args.benchmark} in `{args.metric}`, one weight per regime, over "
+            "the in-distribution and the held-out regimes above; `degradation` is held out "
+            "minus in distribution (positive = worse out of distribution). For multi-seed "
+            "agents the 95% CI is across training seeds.",
+            "",
+            _markdown_table(robustness.sort_values("degradation"), decimals={"degradation": 2}),
+            "",
+        ]
     if selection:
         parts += [
             "## Checkpoint selection",

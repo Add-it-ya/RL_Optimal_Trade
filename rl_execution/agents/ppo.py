@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, Optional
 import numpy as np
 
 from rl_execution.agents.base import BaseAgent, resolve_device
+from rl_execution.config import ActionType
 
 
 class LinearSchedule:
@@ -50,6 +51,7 @@ class PPOAgent(BaseAgent):
     """Adapter around a Stable-Baselines3 ``PPO`` model."""
 
     name = "PPO"
+    action_type = ActionType.CONTINUOUS
 
     def __init__(
         self,

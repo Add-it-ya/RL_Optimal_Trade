@@ -4,7 +4,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from rl_execution.cli import build_parser, comparison_table, main, parse_seeds
+from rl_execution.cli import (
+    build_parser,
+    comparison_table,
+    main,
+    parse_seeds,
+    schedule_l1,
+    split_degradation,
+)
 from rl_execution.utils.warnings import configure_cli_warnings
 
 
@@ -56,6 +63,96 @@ def test_comparison_table_pairs_episodes_and_aggregates_seeds():
     assert table.loc["TWAP", "n_seeds"] == "—"
     assert table.loc["PPO", "n_degenerate"] == 0  # no effective_steps column -> not flagged
     assert np.isnan(table.loc["TWAP", "p_value"])
+    assert np.isnan(table.loc["PPO", "L1_vs_AC"])  # no schedules given
+
+
+def test_comparison_table_reports_float_noise_as_an_exact_tie():
+    """SignalRule with a fitted beta of 0 trades like AC up to ~4e-7 bps of rounding."""
+    rng = np.random.default_rng(1)
+    market = rng.normal(30.0, 50.0, size=40)
+    noise = rng.normal(0.0, 1e-7, size=40)
+    rows = [
+        {"regime": "r", "strategy": s, "agent": s, "seed": np.nan, "episode": i}
+        | {"objective_bps": m + (e if s == "SignalRule" else 0.0)}
+        for s in ("AlmgrenChriss", "SignalRule")
+        for i, (m, e) in enumerate(zip(market, noise))
+    ]
+    row = comparison_table(pd.DataFrame(rows)).set_index("strategy").loc["SignalRule"]
+    assert row["vs_AlmgrenChriss"] == 0.0 and row["ci_low"] == row["ci_high"] == 0.0
+    assert row["p_value"] == 1.0 and row["p_holm"] == 1.0
+
+
+def _schedule_rows(regime, strategy, agent, seed, fractions):
+    return [
+        {"regime": regime, "strategy": strategy, "agent": agent, "seed": seed, "step": i}
+        | {"fraction": f}
+        for i, f in enumerate(fractions)
+    ]
+
+
+def test_schedule_l1_is_zero_padded_and_the_table_takes_the_median_seed():
+    ac = [0.4, 0.3, 0.2, 0.1]
+    rows = _schedule_rows("r", "AlmgrenChriss", "AlmgrenChriss", np.nan, ac)
+    rows += _schedule_rows("r", "TWAP", "TWAP", np.nan, [0.25] * 4)
+    rows += _schedule_rows("r", "PPO/s0", "PPO", 0.0, ac)  # L1 0
+    rows += _schedule_rows("r", "PPO/s1", "PPO", 1.0, [0.5, 0.3, 0.2])  # stops early: L1 0.2
+    rows += _schedule_rows("r", "PPO/s2", "PPO", 2.0, [1.0])  # block trade: L1 1.2
+    schedules = pd.DataFrame(rows)
+    l1 = schedule_l1(schedules)
+    assert l1[("r", "AlmgrenChriss")] == 0.0
+    assert l1[("r", "TWAP")] == pytest.approx(0.4)
+    assert l1[("r", "PPO/s1")] == pytest.approx(0.2)  # the missing last step counts
+    assert l1[("r", "PPO/s2")] == pytest.approx(1.2)
+
+    episodes = pd.DataFrame(
+        [
+            {"regime": "r", "strategy": s, "agent": a, "seed": k, "episode": i}
+            | {"objective_bps": 30.0 + i}
+            for s, a, k in [
+                ("AlmgrenChriss", "AlmgrenChriss", np.nan),
+                ("TWAP", "TWAP", np.nan),
+                ("PPO/s0", "PPO", 0.0),
+                ("PPO/s1", "PPO", 1.0),
+                ("PPO/s2", "PPO", 2.0),
+            ]
+            for i in range(4)
+        ]
+    )
+    table = comparison_table(episodes, schedules=schedules).set_index("strategy")
+    assert table.loc["PPO", "L1_vs_AC"] == pytest.approx(0.2)  # median of 0, 0.2, 1.2
+    assert table.loc["TWAP", "L1_vs_AC"] == pytest.approx(0.4)
+    assert table.loc["AlmgrenChriss", "L1_vs_AC"] == 0.0
+
+
+def test_split_degradation_compares_held_out_to_in_distribution_per_seed():
+    """Seed 0 is 1 bps off AC in distribution and 3 bps off held out; seed 1: 2 and 6."""
+    gaps = {
+        ("in_a", 0): 1.0, ("in_b", 0): 1.0, ("out_a", 0): 2.0, ("out_b", 0): 4.0,
+        ("in_a", 1): 2.0, ("in_b", 1): 2.0, ("out_a", 1): 6.0, ("out_b", 1): 6.0,
+    }  # fmt: skip
+    rows = []
+    for regime in ("in_a", "in_b", "out_a", "out_b"):
+        for i in range(6):
+            base = 25.0 + 3.0 * i
+            rows.append({"regime": regime, "strategy": "AlmgrenChriss", "agent": "AlmgrenChriss"}
+                        | {"seed": np.nan, "episode": i, "objective_bps": base})  # fmt: skip
+            rows.append({"regime": regime, "strategy": "TWAP", "agent": "TWAP", "seed": np.nan}
+                        | {"episode": i, "objective_bps": base + 4.0})  # fmt: skip
+            for seed in (0, 1):
+                rows.append(
+                    {"regime": regime, "strategy": f"PPO/s{seed}", "agent": "PPO", "seed": seed}
+                    | {"episode": i, "objective_bps": base + gaps[(regime, seed)]}
+                )
+    splits = {"in_distribution": ["in_a", "in_b"], "held_out": ["out_a", "out_b"]}
+    table = split_degradation(pd.DataFrame(rows), splits).set_index("strategy")
+    assert "AlmgrenChriss" not in table.index
+    assert table.loc["PPO", "n_seeds"] == 2
+    assert table.loc["PPO", "vs_AlmgrenChriss_in"] == pytest.approx(1.5)
+    assert table.loc["PPO", "vs_AlmgrenChriss_held_out"] == pytest.approx(4.5)
+    assert table.loc["PPO", "degradation"] == pytest.approx(3.0)  # seeds: 2 and 4
+    assert 2.0 <= table.loc["PPO", "ci_low"] <= 3.0 <= table.loc["PPO", "ci_high"] <= 4.0
+    assert table.loc["TWAP", "degradation"] == pytest.approx(0.0)
+    assert table.loc["TWAP", "n_seeds"] == "—" and np.isnan(table.loc["TWAP", "ci_low"])
 
 
 @pytest.mark.slow
@@ -85,11 +182,18 @@ def test_train_evaluate_report_end_to_end(tmp_path):
     assert {"DumpAtStart", "WaitThenDump", "SignalRule"} <= set(episodes["strategy"])
     assert {"objective_bps", "effective_steps"} <= set(episodes.columns)
     assert (results / "figures" / "abm_ac_optimal_schedule.png").exists()
+    schedules = pd.read_csv(results / "schedules.csv")
+    full = schedules.groupby("strategy")["fraction"].sum()
+    assert full.to_numpy() == pytest.approx(1.0)  # every strategy completes the order
 
     main(["report", "--experiment", "t", "--results", str(results)])
     report = (results / "REPORT.md").read_text(encoding="utf-8")
     assert "## abm_ac_optimal" in report and "DoubleDQN" in report
-    assert "vs_AlmgrenChriss" in report and "J_bps" in report
+    assert "vs_AlmgrenChriss" in report and "J_bps" in report and "L1_vs_AC" in report
+    comparison = pd.read_csv(results / "comparison.csv").set_index("strategy")
+    assert comparison.loc["AlmgrenChriss", "L1_vs_AC"] == 0.0
+    assert comparison.loc["DoubleDQN", "L1_vs_AC"] >= 0.0
     assert "SignalRule coefficient fitted on validation seeds" in report
     assert "## Checkpoint selection" in report and "n_degenerate" in report
+    assert "code version(s): " in report
     assert (results / "figures" / "validation_curves.png").exists()

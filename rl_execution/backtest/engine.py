@@ -16,6 +16,13 @@ import pandas as pd
 
 from rl_execution.metrics.metrics import aggregate_metrics, compute_episode_metrics
 
+#: Paired differences no larger than this (bps) are floating-point noise between strategies
+#: that trade identically -- e.g. ``SignalRule`` with a fitted coefficient of 0 against
+#: Almgren-Chriss, where the trade-size -> action -> trade-size round trip leaves per-episode
+#: differences of up to ~4e-7 bps.  They are reported as a tie (p = 1), not as a
+#: "significant" 1e-12 bps edge.
+TIE_TOLERANCE = 1e-6
+
 
 @dataclass
 class BacktestResult:
@@ -228,6 +235,8 @@ def _paired_pvalue(diff: np.ndarray, block: int = 1) -> float:
         d = d[: (d.size // block) * block].reshape(-1, block).mean(axis=1)
     if d.size < 2:
         return float("nan")
+    if float(np.max(np.abs(d))) <= TIE_TOLERANCE:
+        return 1.0
     if float(d.std(ddof=1)) == 0.0:
         # Identical series -> no evidence of a difference (p = 1); a non-zero constant shift is
         # a degenerate "infinitely significant" case, reported as p = 0.
@@ -302,7 +311,7 @@ def paired_is_table(
     return pd.DataFrame(rows).set_index("strategy").sort_values("IS_bps")
 
 
-def _normalised_schedule(res: BacktestResult) -> np.ndarray:
+def normalised_schedule(res: BacktestResult) -> np.ndarray:
     """Mean execution schedule as per-step fractions of the parent order."""
     sched = np.asarray(res.mean_schedule(), dtype=float)
     if sched.size == 0:
@@ -341,11 +350,11 @@ def schedule_gap_table(
     """
     if reference not in results:
         raise KeyError(f"Reference strategy '{reference}' not in results.")
-    ref = _normalised_schedule(results[reference])
+    ref = normalised_schedule(results[reference])
     rows = [
         {
             "strategy": name,
-            "schedule_L1": schedule_gap(_normalised_schedule(res), ref),
+            "schedule_L1": schedule_gap(normalised_schedule(res), ref),
             "IS_bps": res.aggregate.get("implementation_shortfall_bps_mean", float("nan")),
         }
         for name, res in results.items()

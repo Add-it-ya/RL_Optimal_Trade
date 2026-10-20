@@ -5,16 +5,19 @@ Each regime is a :class:`~rl_execution.config.MarketConfig`.  Regimes are groupe
 * **volatility**  -- low / medium / high realised volatility,
 * **liquidity**   -- thin / normal / deep order books,
 * **trend**       -- bull (drift up) / bear (drift down) / sideways (mean-reverting),
-* **brownian**    -- alternative price models and volatility dynamics.
+* **brownian**    -- alternative price models and volatility dynamics,
+* **signal**      -- the ground-truth market at five order-book signal strengths (E2).
 
 :func:`randomized_market_config` samples a config from across these axes and is used for
-*domain-randomised* training so a single agent generalises to unseen conditions.
+*domain-randomised* training so a single agent generalises to unseen conditions;
+:data:`IN_DISTRIBUTION` and :data:`HELD_OUT` split the named regimes by whether that family
+covers them (E3).
 """
 
 from __future__ import annotations
 
-from dataclasses import replace
-from typing import Dict, List
+from dataclasses import fields, replace
+from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 
@@ -98,11 +101,40 @@ REGIMES.update(
     }
 )
 
+# --- Signal-strength sweep (E2) -----------------------------------------------------
+# The ground-truth market with the order-book signal switched back on, at five strengths.
+# The sweep is built on ``abm_ac_optimal`` rather than the default market so that the IC = 0
+# end is exactly the world where Almgren-Chriss is optimal: on the default 500-share book
+# the nonlinear book walk leaves AC slightly suboptimal even without a signal, and an
+# "edge" at IC = 0 could not be told apart from exploiting the book's shape.
+#
+# ``imbalance_alpha`` was solved by ``solve_alpha(get_regime("abm_ac_optimal"), ic,
+# n_episodes=2000, seed=CALIBRATION_BASE_SEED)``.  IC is not linear in alpha (the observed
+# imbalance is clipped), hence solved rather than scaled.  Observed IC measured on 4,000
+# fresh episodes (seeds from CALIBRATION_BASE_SEED + 500,000): -0.001, 0.028, 0.053, 0.103,
+# 0.202; ``tests/test_experiments.py`` re-measures them.
+SIGNAL_ALPHAS: Dict[str, float] = {
+    "signal_ic000": 0.0,
+    "signal_ic025": 1.59e-4,
+    "signal_ic050": 2.97e-4,
+    "signal_ic100": 5.76e-4,
+    "signal_ic200": 1.15e-3,
+}
+#: Target observed IC of each signal regime.
+SIGNAL_TARGET_IC: Dict[str, float] = {name: int(name[-3:]) / 1000 for name in SIGNAL_ALPHAS}
+REGIMES.update(
+    {
+        name: replace(REGIMES["abm_ac_optimal"], imbalance_alpha=alpha)
+        for name, alpha in SIGNAL_ALPHAS.items()
+    }
+)
+
 REGIME_GROUPS: Dict[str, List[str]] = {
     "volatility": ["low_vol", "medium_vol", "high_vol"],
     "liquidity": ["thin", "normal_liquidity", "deep"],
     "trend": ["bull", "bear", "sideways"],
     "brownian": ["abm_ac_optimal", "gbm_medium", "clustered_vol", "leverage"],
+    "signal": list(SIGNAL_ALPHAS),
 }
 
 
@@ -112,6 +144,8 @@ CLASSIC_REGIMES: List[str] = [
 ]
 #: Regimes that swap in an explicit Brownian price process (opt-in; see :func:`list_regimes`).
 BROWNIAN_REGIMES: List[str] = list(REGIME_GROUPS["brownian"])
+#: The E2 signal sweep (never part of the default grid; name them or use ``signal``).
+SIGNAL_REGIMES: List[str] = list(REGIME_GROUPS["signal"])
 
 
 def list_regimes(include_brownian: bool = False) -> List[str]:
@@ -135,33 +169,57 @@ def get_regime(name: str) -> MarketConfig:
     return replace(REGIMES[name])  # return a copy
 
 
+#: Support of :func:`randomized_market_config` (the default, non-Brownian family):
+#: ``field -> (low, high, unit)``, each drawn as ``uniform(low, high) * unit``.  Every
+#: other field is held at the default, except ``mean_reversion`` (drawn from
+#: :data:`_RANDOMIZED_MEAN_REVERSION`, switching the price process to OU when positive).
+_RANDOMIZED_UNIFORM: Dict[str, Tuple[float, float, float]] = {
+    "volatility": (0.75, 1.25, _SIGMA),
+    "vol_of_vol": (0.0, 0.3, 1.0),
+    "drift": (-0.025, 0.025, _SIGMA),
+    "base_depth": (300.0, 1000.0, 1.0),
+    "base_spread": (0.01, 0.03, 1.0),
+    "base_market_volume": (1500.0, 3000.0, 1.0),
+    "temporary_impact": (0.7, 1.4, _BASE.temporary_impact),
+    "permanent_impact": (0.7, 1.4, _BASE.permanent_impact),
+    "imbalance_alpha": (0.5, 1.5, _BASE.imbalance_alpha),
+}
+_RANDOMIZED_MEAN_REVERSION = [0.0, 0.0, 0.10]  # a third of the draws are OU
+
+
 def randomized_market_config(
     rng: np.random.Generator | None = None, brownian: bool = False
 ) -> MarketConfig:
     """Sample a market config spanning the regime axes (for robust training).
 
-    The ranges sit around the calibrated default and deliberately stop short of the
-    ``low_vol`` / ``high_vol`` / ``thin`` / ``deep`` presets, so those can serve as
-    out-of-distribution tests for an agent trained on this family.
+    The ranges (:data:`_RANDOMIZED_UNIFORM`) sit around the calibrated default and
+    deliberately stop short of the ``low_vol`` / ``high_vol`` / ``thin`` / ``deep``
+    presets, so those can serve as out-of-distribution tests for an agent trained on this
+    family (see :data:`HELD_OUT` and :func:`outside_randomized_support`).
 
     With ``brownian=True`` the sampler additionally randomises over price process,
     volatility clustering and the leverage correlation, so a domain-randomised agent also
     generalises across *price models*, not just across parameters of one model.
     """
     rng = rng or np.random.default_rng()
-    cfg = replace(
+
+    def draw(name: str) -> float:
+        low, high, unit = _RANDOMIZED_UNIFORM[name]
+        return float(rng.uniform(low, high) * unit)
+
+    cfg = replace(  # keyword order is the draw order; keep it stable for reproducibility
         _BASE,
-        volatility=float(rng.uniform(0.75, 1.25) * _SIGMA),
+        volatility=draw("volatility"),
         vol_process="iid_lognormal",
-        vol_of_vol=float(rng.uniform(0.0, 0.3)),
-        drift=float(rng.uniform(-0.025, 0.025) * _SIGMA),
-        mean_reversion=float(rng.choice([0.0, 0.0, 0.10])),
-        base_depth=float(rng.uniform(300.0, 1000.0)),
-        base_spread=float(rng.uniform(0.01, 0.03)),
-        base_market_volume=float(rng.uniform(1500.0, 3000.0)),
-        temporary_impact=float(rng.uniform(0.7, 1.4) * _BASE.temporary_impact),
-        permanent_impact=float(rng.uniform(0.7, 1.4) * _BASE.permanent_impact),
-        imbalance_alpha=float(rng.uniform(0.5, 1.5) * _BASE.imbalance_alpha),
+        vol_of_vol=draw("vol_of_vol"),
+        drift=draw("drift"),
+        mean_reversion=float(rng.choice(_RANDOMIZED_MEAN_REVERSION)),
+        base_depth=draw("base_depth"),
+        base_spread=draw("base_spread"),
+        base_market_volume=draw("base_market_volume"),
+        temporary_impact=draw("temporary_impact"),
+        permanent_impact=draw("permanent_impact"),
+        imbalance_alpha=draw("imbalance_alpha"),
     )
     if cfg.mean_reversion > 0:
         cfg = replace(cfg, price_process="ou")
@@ -177,3 +235,72 @@ def randomized_market_config(
         vol_persistence=float(rng.uniform(0.5, 0.95)),
         leverage_corr=float(rng.uniform(-0.7, 0.0)),
     )
+
+
+def outside_randomized_support(cfg: MarketConfig) -> List[str]:
+    """The fields on which ``cfg`` lies outside the default domain-randomised family.
+
+    An empty list means :func:`randomized_market_config` (``brownian=False``) can draw a
+    market with every parameter of ``cfg``, up to a rounding tolerance at the range ends,
+    so an agent trained on that family has seen markets like it.  Otherwise the names say
+    on which axes ``cfg`` is out of distribution.  ``vol_process="none"`` counts as the
+    ``vol_of_vol = 0`` end of the sampled lognormal family.
+    """
+    outside = []
+    for f in fields(MarketConfig):
+        name, value = f.name, getattr(cfg, f.name)
+        if name in _RANDOMIZED_UNIFORM:
+            low, high, unit = _RANDOMIZED_UNIFORM[name]
+            low, high = sorted((low * unit, high * unit))
+            tol = 1e-9 * max(abs(low), abs(high))
+            inside = low - tol <= value <= high + tol
+        elif name == "mean_reversion":
+            inside = value in _RANDOMIZED_MEAN_REVERSION
+        elif name == "vol_process":
+            inside = value in ("none", "iid_lognormal")
+        elif name == "price_process":
+            inside = value == ("ou" if cfg.mean_reversion > 0 else "abm")
+        else:
+            inside = value == getattr(_BASE, name)
+        if not inside:
+            outside.append(name)
+    return outside
+
+
+# --- E3 split ------------------------------------------------------------------------
+#: Regimes inside the support of the domain-randomised training family: an agent trained
+#: with ``rlx train --randomized`` is scored here *in distribution*.
+IN_DISTRIBUTION: List[str] = ["normal_liquidity", "medium_vol", "sideways"]
+#: Regimes outside it on at least one axis (``tests/test_experiments.py`` checks both
+#: lists against :func:`outside_randomized_support`).  ``bull`` / ``bear`` (drift
+#: +-0.04 sigma vs a +-0.025 sigma training range) and ``gbm_medium`` (GBM vs ABM over a
+#: 20-step horizon) are only mildly shifted; the others move volatility, liquidity or the
+#: volatility dynamics well beyond anything seen in training.
+HELD_OUT: List[str] = [
+    "low_vol",
+    "high_vol",
+    "thin",
+    "deep",
+    "bull",
+    "bear",
+    "gbm_medium",
+    "clustered_vol",
+    "leverage",
+]
+SPLITS: Dict[str, List[str]] = {"in_distribution": IN_DISTRIBUTION, "held_out": HELD_OUT}
+
+
+def resolve_regimes(names: Sequence[str]) -> List[str]:
+    """Expand group names (``signal``, ``held_out``, ...) into regimes, keeping order.
+
+    Each name is a regime, a key of :data:`REGIME_GROUPS` or a key of :data:`SPLITS`.
+    Duplicates are dropped; an unknown name raises ``KeyError``.
+    """
+    out: List[str] = []
+    for name in names:
+        members = REGIME_GROUPS.get(name) or SPLITS.get(name)
+        if members is None:
+            get_regime(name)  # raises a helpful KeyError for an unknown name
+            members = [name]
+        out.extend(m for m in members if m not in out)
+    return out

@@ -5,7 +5,7 @@ import pytest
 
 from rl_execution.agents import AgentStrategy, make_agent, required_action_type
 from rl_execution.backtest import run_episode
-from rl_execution.config import ExecutionConfig, MarketConfig
+from rl_execution.config import ActionType, ExecutionConfig, MarketConfig
 from rl_execution.envs import ExecutionEnv
 
 # Small enough to be fast, large enough that the DQN agents actually take gradient steps
@@ -34,6 +34,22 @@ def test_agent_builds_trains_predicts(name):
         if env.action_space.shape
         else int(action)
     )
+
+
+@pytest.mark.parametrize("name", ["doubledqn", "ppo"])
+def test_agent_strategy_refuses_an_env_with_the_other_action_space(name):
+    """A DQN action index fed to the continuous env reads as "liquidate now" -- the
+    evaluation once scored every DoubleDQN seed exactly like DumpAtStart that way."""
+    agent = make_agent(name, _env(name), seed=0, **_FAST[name])
+    other = (
+        ActionType.CONTINUOUS
+        if required_action_type(name) is ActionType.DISCRETE
+        else ActionType.DISCRETE
+    )
+    wrong = ExecutionEnv(MarketConfig(), ExecutionConfig(action_type=other))
+    with pytest.raises(ValueError, match="action space"):
+        run_episode(wrong, AgentStrategy(agent), seed=0)
+    run_episode(_env(name), AgentStrategy(agent), seed=0)  # the matching env is fine
 
 
 def test_dqn_takes_gradient_steps():

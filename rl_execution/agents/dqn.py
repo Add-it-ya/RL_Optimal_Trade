@@ -30,6 +30,7 @@ import numpy as np
 
 from rl_execution.agents.base import BaseAgent, resolve_device
 from rl_execution.agents.replay_buffer import ReplayBuffer
+from rl_execution.config import ActionType
 
 
 def _torch():
@@ -81,6 +82,8 @@ class QNetwork:
 
 class DQNAgent(BaseAgent):
     """Deep Q-Network with an optional Double-DQN target."""
+
+    action_type = ActionType.DISCRETE
 
     def __init__(
         self,

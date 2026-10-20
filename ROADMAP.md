@@ -11,19 +11,33 @@
 
 ## Where things stand (v0.2)
 
-**Phases 1 and 2 are done** (see below). Phase 1 brought the calibrated market, the exact
+**Phases 1 and 2 are done, and Phase 3's first experiment (E1) has run** (see below).
+Phase 1 brought the calibrated market, the exact
 objective, the TWAP-relative action, the cleaner observation and the null baselines.
 Phase 2 brought vectorised PPO, DoubleDQN fixes, O(1) rewards and checkpoint selection on
 validation seeds. First evidence that training now works, on the signal-free
 `abm_ac_optimal` regime with the default 2M-step budget: four PPO runs reached a validation
 objective of 29.1–29.6 bps against 28.9 for the Almgren-Chriss optimum and 32.8 for TWAP
-(their untrained starting point), closing 82–95% of the gap. Phase 3's E1 test (ten seeds,
-test seeds, schedule distance to AC) is what will confirm or refute it. DoubleDQN first did
+(their untrained starting point), closing 82–95% of the gap. DoubleDQN first did
 not learn at all: the value gaps between neighbouring trade sizes are tiny next to the
 reward noise, so its greedy action flipped with estimation error. A dueling head, batch
 1024 and a learning rate of 5e-5 fixed that. Two 2M-step seeds kept checkpoints at 29.7 bps
 (untrained: 45.9 and 187.7), and most checkpoints after 300k sit below TWAP. It is noisier
 than PPO, front-loads more than AC, and takes ~27 minutes per seed.
+
+**E1 result** (ten seeds per agent, 2M steps each, scored on 5,000 test episodes the agents
+never saw; AC 28.87 bps, TWAP 32.83). PPO ends up **0.47 bps** above the Almgren-Chriss
+optimum (95% CI 0.23–0.79 across seeds). That is inside the 0.5 bps tolerance but still
+measurably worse than AC. Its average schedule has the right front-loaded shape but is
+flatter than AC's, at a median L1 distance of 0.125 against a 0.10 bar. By the criteria
+fixed in advance that reads as *directionally right, under-tuned*. Four of the ten seeds do
+clear 0.10, and they are the cheapest ones. DoubleDQN ends up **1.73 bps** off (1.52–1.96,
+median L1 0.197), so it fails the cost criterion. Its greedy action reacts to noise in the
+observation, so its schedule changes from episode to episode in a market where nothing is
+predictable; uneven trade sizes cost more under impact that grows faster than the trade.
+No seed of either agent collapsed to a block trade. Running the evaluation also exposed
+a bug: `rlx evaluate` gave DoubleDQN the continuous action space, which made it look
+exactly like dumping the order at once. That's fixed, and a mismatch now raises an error.
 
 The lean core is done: Brownian-only market dynamics, PPO and DQN / Double DQN, one
 `rlx train | evaluate | report` command line, and run folders whose weights are pinned by a
@@ -121,7 +135,7 @@ them.
 | exp | market | question |
 |---|---|---|
 | **E1** ground truth | arithmetic BM, no signal, constant volatility | Does the learner recover the Almgren-Chriss optimum? |
-| **E2** signal sweep | IC ∈ {0, 0.025, 0.05, 0.10, 0.20} | How does the edge over AC and over a two-line rule scale with signal strength? |
+| **E2** signal sweep | the E1 market with its order-book signal switched on, IC ∈ {0, 0.025, 0.05, 0.10, 0.20} | How does the edge over AC and over a two-line rule scale with signal strength? |
 | **E3** robustness | train on a randomised family; test in- and out-of-distribution (2× vol, 2× impact, GBM, clustered vol, leverage) | How much does performance degrade off-distribution? |
 
 | check | pass |
