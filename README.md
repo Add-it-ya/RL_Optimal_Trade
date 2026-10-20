@@ -62,8 +62,10 @@ rlx report --experiment e1
 
 - **Budget and speed.** The default is 2M environment steps per seed. PPO steps 16
   environments in one process (`--n-envs`), at roughly 6–7k steps/s on one CPU core, so
-  about five minutes per seed. Subprocess workers are slower here: the environment is cheap
-  and inter-process overhead dominates. Run seeds in parallel as separate processes instead.
+  about five minutes per seed (DoubleDQN, which trains one environment with a gradient
+  update every 4 steps, takes ~25 minutes). Subprocess workers are slower here: the
+  environment is cheap and inter-process overhead dominates. Run seeds in parallel as
+  separate processes instead.
 - **Three disjoint seed blocks.** Training draws its own episodes; **validation** seeds start
   at 1,000,000 and are used only to pick checkpoints; **test** seeds start at 2,000,000 and
   are touched only by `rlx evaluate`.

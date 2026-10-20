@@ -10,6 +10,15 @@ Only a discrete action space is supported (one Q-value per TWAP multiplier).
 Defaults suit the execution task: the horizon is finite and the time left is part of the
 observation, so ``gamma = 1`` (no discounting of costs that are certain to arrive), and the
 target network tracks the online one by Polyak averaging rather than periodic hard copies.
+
+The rest of the defaults come from one diagnosis.  A different trade size moves the
+episode objective by a fraction of a bp, while each transition's target carries tens of bps
+of price noise, so per-action Q estimates are noisier than the gaps between them and a
+greedy policy flips with estimation error.  Hence a **dueling** head (state value and
+action advantage learned separately), large batches (1024), a small learning rate (5e-5)
+and one update every 4 steps.  With the earlier defaults (no dueling, batch 256, lr 5e-4,
+an update every step) no checkpoint ever beat the untrained network on the signal-free
+``abm_ac_optimal`` regime; with these the best checkpoints match Almgren-Chriss.
 """
 
 from __future__ import annotations
@@ -29,10 +38,33 @@ def _torch():
     return torch
 
 
+def _dueling_head(width: int, n_actions: int):
+    """``Q(s, a) = V(s) + A(s, a) - mean_a A(s, a)`` (Wang et al., 2016).
+
+    One stream learns the value of the state, the other only how much each action adds to
+    it.  That helps exactly when the actions differ by little next to the noise in the
+    return -- here a different trade size moves the episode objective by fractions of a
+    bp, while the price path moves it by tens.
+    """
+    import torch.nn as nn
+
+    class DuelingHead(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.value = nn.Linear(width, 1)
+            self.advantage = nn.Linear(width, n_actions)
+
+        def forward(self, h):
+            adv = self.advantage(h)
+            return self.value(h) + adv - adv.mean(dim=1, keepdim=True)
+
+    return DuelingHead()
+
+
 class QNetwork:
     """Lazily-built MLP Q-network wrapper (keeps torch import local)."""
 
-    def __init__(self, obs_dim: int, n_actions: int, hidden=(64, 64)):
+    def __init__(self, obs_dim: int, n_actions: int, hidden=(64, 64), dueling: bool = False):
         import torch.nn as nn
 
         layers = []
@@ -40,7 +72,7 @@ class QNetwork:
         for h in hidden:
             layers += [nn.Linear(last, h), nn.ReLU()]
             last = h
-        layers += [nn.Linear(last, n_actions)]
+        layers += [_dueling_head(last, n_actions) if dueling else nn.Linear(last, n_actions)]
         self.net = nn.Sequential(*layers)
 
     def __call__(self, x):
@@ -55,12 +87,13 @@ class DQNAgent(BaseAgent):
         env,
         double: bool = False,
         hidden=(64, 64),
-        lr: float = 5e-4,
+        dueling: bool = True,
+        lr: float = 5e-5,
         gamma: float = 1.0,
         buffer_size: int = 200_000,
-        batch_size: int = 256,
+        batch_size: int = 1024,
         learning_starts: int = 5_000,
-        train_freq: int = 1,
+        train_freq: int = 4,
         tau: float = 0.005,
         eps_start: float = 1.0,
         eps_end: float = 0.05,
@@ -93,8 +126,8 @@ class DQNAgent(BaseAgent):
             torch.manual_seed(seed)
         self.rng = np.random.default_rng(seed)
 
-        self.q = QNetwork(self.obs_dim, self.n_actions, hidden)
-        self.q_target = QNetwork(self.obs_dim, self.n_actions, hidden)
+        self.q = QNetwork(self.obs_dim, self.n_actions, hidden, dueling)
+        self.q_target = QNetwork(self.obs_dim, self.n_actions, hidden, dueling)
         self.q.net.to(self.device)
         self.q_target.net.to(self.device)
         self.q_target.net.load_state_dict(self.q.net.state_dict())
@@ -102,6 +135,7 @@ class DQNAgent(BaseAgent):
         self.loss_fn = nn.SmoothL1Loss()  # Huber
         self.buffer = ReplayBuffer(buffer_size, self.obs_dim, rng=self.rng)
         self._hidden = hidden
+        self._dueling = dueling
         self.train_log: list[float] = []
 
     # ------------------------------------------------------------------ acting
@@ -206,6 +240,7 @@ class DQNAgent(BaseAgent):
                 "obs_dim": self.obs_dim,
                 "n_actions": self.n_actions,
                 "hidden": self._hidden,
+                "dueling": self._dueling,
                 "double": self.double,
             },
             path,
@@ -215,6 +250,11 @@ class DQNAgent(BaseAgent):
     def load(cls, path: str, env=None) -> "DQNAgent":
         torch = _torch()
         ckpt = torch.load(path, map_location="cpu", weights_only=False)
-        agent = cls(env, double=ckpt["double"], hidden=tuple(ckpt["hidden"]))
+        agent = cls(
+            env,
+            double=ckpt["double"],
+            hidden=tuple(ckpt["hidden"]),
+            dueling=ckpt.get("dueling", False),
+        )
         agent.set_weights(ckpt["state_dict"])
         return agent

@@ -18,11 +18,12 @@ validation seeds. First evidence that training now works, on the signal-free
 `abm_ac_optimal` regime with the default 2M-step budget: four PPO runs reached a validation
 objective of 29.1–29.6 bps against 28.9 for the Almgren-Chriss optimum and 32.8 for TWAP
 (their untrained starting point), closing 82–95% of the gap. Phase 3's E1 test (ten seeds,
-test seeds, schedule distance to AC) is what will confirm or refute it. DoubleDQN does not
-learn yet: in two 400k-step probes every later checkpoint scored worse than the untrained
-network (33–66 bps), so selection kept step 0. The likely cause is that the value gaps
-between neighbouring TWAP multipliers are tiny next to the reward noise, so the greedy
-action flips with estimation error. Tuning it is open work before E1.
+test seeds, schedule distance to AC) is what will confirm or refute it. DoubleDQN first did
+not learn at all: the value gaps between neighbouring trade sizes are tiny next to the
+reward noise, so its greedy action flipped with estimation error. A dueling head, batch
+1024 and a learning rate of 5e-5 fixed that. Two 2M-step seeds kept checkpoints at 29.7 bps
+(untrained: 45.9 and 187.7), and most checkpoints after 300k sit below TWAP. It is noisier
+than PPO, front-loads more than AC, and takes ~27 minutes per seed.
 
 The lean core is done: Brownian-only market dynamics, PPO and DQN / Double DQN, one
 `rlx train | evaluate | report` command line, and run folders whose weights are pinned by a
@@ -107,7 +108,8 @@ them.
 ## Phase 2: train properly
 
 - PPO with 16 vectorised envs in one process, γ = 1, a hand-scaled observation and reward,
-  2M steps per seed (~5 minutes on one core). DoubleDQN with γ = 1 and Polyak target updates.
+  2M steps per seed (~5 minutes on one core). DoubleDQN with γ = 1, Polyak target updates,
+  a dueling head, batch 1024 and learning rate 5e-5 (~27 minutes per 2M-step seed).
 - **Ten training seeds** per configuration; the training seed is the unit of analysis.
 - **Three disjoint seed blocks**: training, validation (checkpoint selection), and test
   (touched only by `rlx evaluate`).

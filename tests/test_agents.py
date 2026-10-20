@@ -44,17 +44,33 @@ def test_dqn_takes_gradient_steps():
 
 
 @pytest.mark.parametrize("name", ["dqn", "doubledqn"])
-def test_custom_dqn_save_load(tmp_path, name):
+@pytest.mark.parametrize("dueling", [False, True])
+def test_custom_dqn_save_load(tmp_path, name, dueling):
     env = _env(name)
-    agent = make_agent(name, env, seed=0, **_FAST[name])
+    agent = make_agent(name, env, seed=0, dueling=dueling, **_FAST[name])
     agent.train(400)
     path = str(tmp_path / "model.pt")
     agent.save(path)
     from rl_execution.agents.dqn import DQNAgent
 
     loaded = DQNAgent.load(path, env=env)
+    assert loaded._dueling is dueling
     obs, _ = env.reset(seed=1)
     assert loaded.predict(obs) == agent.predict(obs)
+
+
+def test_dueling_head_centres_the_advantages():
+    """Q = V + A - mean(A): the mean Q over actions equals the state value."""
+    torch = pytest.importorskip("torch")
+    from rl_execution.agents.dqn import QNetwork
+
+    net = QNetwork(obs_dim=7, n_actions=10, dueling=True)
+    x = torch.randn(5, 7)
+    q = net(x)
+    assert q.shape == (5, 10)
+    head = net.net[-1]
+    value = head.value(net.net[:-1](x))
+    assert torch.allclose(q.mean(dim=1, keepdim=True), value, atol=1e-6)
 
 
 def test_ppo_save_load_round_trip(tmp_path):
@@ -92,7 +108,7 @@ def test_dqn_target_tracks_online_network_by_polyak_averaging():
     torch = pytest.importorskip("torch")
     agent = make_agent("doubledqn", _env("doubledqn"), seed=0, **_FAST["doubledqn"], tau=0.5)
     before = [p.detach().clone() for p in agent.q_target.net.parameters()]
-    agent.train(80)  # 30 updates past learning_starts
+    agent.train(80)  # a few updates past learning_starts (one every train_freq steps)
     after = list(agent.q_target.net.parameters())
     online = list(agent.q.net.parameters())
     assert any(not torch.equal(b, a) for b, a in zip(before, after))  # the target moved ...

@@ -20,8 +20,13 @@ All notable changes to this project are documented in this file. The format is b
   rollout. Sub-environment seeds are spread `1000` apart per training seed so seeds never
   share episodes.
 - **DoubleDQN**: `gamma = 1`, Polyak target updates (`tau = 0.005`) instead of hard copies,
-  learning rate 5e-4, a 200k buffer, batch 256, 5k warm-up steps and epsilon annealed over
-  the first 30% of training.
+  a 200k buffer, 5k warm-up steps and epsilon annealed over the first 30% of training --
+  plus the settings that made it learn at all: a **dueling** head (state value and action
+  advantage learned separately), batch 1024, learning rate 5e-5 and one update every 4
+  steps. A different trade size moves the objective by a fraction of a bp while each
+  target carries tens of bps of price noise, so per-action Q estimates were noisier than
+  the gaps between them and the greedy policy flipped; with the earlier settings no
+  checkpoint ever beat the untrained network.
 - **Rewards are O(1)**: `reward_scale` now defaults to 0.01 (one unit per 100 bps). In raw
   bps the value loss dominated PPO's jointly clipped gradient.
 - `RunConfig` gains `n_envs`, `eval_every`, `val_episodes` and `val_base_seed` (replacing
