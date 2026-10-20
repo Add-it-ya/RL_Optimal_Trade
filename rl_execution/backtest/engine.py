@@ -29,6 +29,7 @@ class BacktestResult:
     reward_curves: List[np.ndarray] = field(default_factory=list)
     price_paths: List[np.ndarray] = field(default_factory=list)
     aggregate: Dict[str, float] = field(default_factory=dict)
+    params: Dict[str, Any] = field(default_factory=dict)  # fitted strategy parameters
 
     # -- convenience views ------------------------------------------------------
     def metrics_frame(self) -> pd.DataFrame:
@@ -44,28 +45,41 @@ class BacktestResult:
         return _stack_mean(self.reward_curves)
 
     def summary_row(self) -> Dict[str, Any]:
-        """A flat one-row summary (means + Sharpe) suitable for a comparison table."""
+        """A flat one-row summary suitable for a comparison table.
+
+        ``Objective_bps`` is the mean of what the agents are rewarded on (implementation
+        shortfall plus the Almgren-Chriss variance penalty); ``IS_std`` is the risk axis.
+        """
         agg = self.aggregate
+        nan = float("nan")
         return {
             "strategy": self.name,
-            "IS_bps": agg.get("implementation_shortfall_bps_mean", float("nan")),
-            "IS_std": agg.get("implementation_shortfall_bps_std", float("nan")),
-            "ExecCost_bps": agg.get("execution_cost_bps_mean", float("nan")),
-            "MktImpact_bps": agg.get("market_impact_bps_mean", float("nan")),
-            "AvgFill": agg.get("avg_fill_price_mean", float("nan")),
-            "Unexecuted": agg.get("unexecuted_shares_mean", float("nan")),
-            "Reward": agg.get("cum_reward_mean", float("nan")),
-            "IS_Sharpe": agg.get("is_sharpe", float("nan")),
+            "Objective_bps": agg.get("objective_bps_mean", nan),
+            "IS_bps": agg.get("implementation_shortfall_bps_mean", nan),
+            "IS_std": agg.get("implementation_shortfall_bps_std", nan),
+            "Risk_bps": agg.get("risk_penalty_bps_mean", nan),
+            "EffSteps": agg.get("effective_steps_mean", nan),
+            "ExecCost_bps": agg.get("execution_cost_bps_mean", nan),
+            "MktImpact_bps": agg.get("market_impact_bps_mean", nan),
+            "Reward": agg.get("cum_reward_mean", nan),
         }
 
 
 def _stack_mean(arrays: List[np.ndarray]) -> np.ndarray:
+    """Element-wise mean of ragged per-episode arrays, zero-padded to the longest.
+
+    Episodes end early once the order is filled; after that nothing more is traded and no
+    inventory is held, so zero is the right value.  (Truncating to the shortest episode
+    instead would silently drop the tail of every longer schedule.)
+    """
     if not arrays:
         return np.array([])
-    n = min(len(a) for a in arrays)
+    n = max(len(a) for a in arrays)
     if n == 0:
         return np.array([])
-    stacked = np.stack([np.asarray(a)[:n] for a in arrays])
+    stacked = np.zeros((len(arrays), n))
+    for i, a in enumerate(arrays):
+        stacked[i, : len(a)] = np.asarray(a, dtype=float)
     return stacked.mean(axis=0)
 
 
@@ -191,10 +205,10 @@ def pool_results(results: List[BacktestResult], name: str) -> BacktestResult:
 
 
 def results_table(results: Dict[str, BacktestResult]) -> pd.DataFrame:
-    """Build a tidy comparison table (one row per strategy), sorted by mean IS."""
+    """Build a tidy comparison table (one row per strategy), sorted by the objective."""
     rows = [res.summary_row() for res in results.values()]
     df = pd.DataFrame(rows).set_index("strategy")
-    return df.sort_values("IS_bps")
+    return df.sort_values("Objective_bps")
 
 
 def episode_is(res: BacktestResult) -> np.ndarray:
@@ -302,13 +316,16 @@ def schedule_gap(a: np.ndarray, b: np.ndarray) -> float:
     """Total absolute difference between two normalised schedules (an L1 distance).
 
     Zero means the two strategies trade the same shape; ``2.0`` is the maximum for two
-    disjoint schedules that each execute the whole order.
+    disjoint schedules that each execute the whole order.  The shorter schedule is padded
+    with zeros (nothing traded after it ends) rather than the longer one truncated, which
+    would hide most of the gap between a front-loaded policy and a spread-out one.
     """
     x, y = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
-    n = min(x.size, y.size)
+    n = max(x.size, y.size)
     if n == 0:
         return float("nan")
-    return float(np.abs(x[:n] - y[:n]).sum())
+    x, y = np.pad(x, (0, n - x.size)), np.pad(y, (0, n - y.size))
+    return float(np.abs(x - y).sum())
 
 
 def schedule_gap_table(

@@ -47,7 +47,9 @@ def test_comparison_table_pairs_episodes_and_aggregates_seeds():
                     "implementation_shortfall_bps": m + shift,
                 }
             )
-    table = comparison_table(pd.DataFrame(rows)).set_index("strategy")
+    table = comparison_table(
+        pd.DataFrame(rows), benchmark="TWAP", metric="implementation_shortfall_bps"
+    ).set_index("strategy")
     assert table.loc["PPO", "n_seeds"] == 2
     assert table.loc["PPO", "vs_TWAP"] == pytest.approx(-6.0)
     assert table.loc["PPO", "ci_low"] <= -6.0 <= table.loc["PPO", "ci_high"]
@@ -76,8 +78,12 @@ def test_train_evaluate_report_end_to_end(tmp_path):
     episodes = pd.read_csv(results / "episodes.csv")
     assert set(episodes["regime"]) == {"abm_ac_optimal"}  # evaluated where it was trained
     assert {"TWAP", "AlmgrenChriss", "DoubleDQN/s0", "DoubleDQN/s1"} <= set(episodes["strategy"])
+    assert {"DumpAtStart", "WaitThenDump", "SignalRule"} <= set(episodes["strategy"])
+    assert {"objective_bps", "effective_steps"} <= set(episodes.columns)
     assert (results / "figures" / "abm_ac_optimal_schedule.png").exists()
 
     main(["report", "--experiment", "t", "--results", str(results)])
     report = (results / "REPORT.md").read_text(encoding="utf-8")
     assert "## abm_ac_optimal" in report and "DoubleDQN" in report
+    assert "vs_AlmgrenChriss" in report and "J_bps" in report
+    assert "SignalRule coefficient fitted on validation seeds" in report

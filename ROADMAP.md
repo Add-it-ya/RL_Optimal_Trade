@@ -11,6 +11,11 @@
 
 ## Where things stand (v0.2)
 
+**Phase 1 is done** (see below): the calibrated market, the exact objective, the
+TWAP-relative action, the cleaner observation and the null baselines are in, pinned by
+tests. The agents' *training setup* has not changed yet: a short PPO run with the old
+settings still ends up worse than TWAP, its own starting point. That is Phase 2.
+
 The lean core is done: Brownian-only market dynamics, PPO and DQN / Double DQN, one
 `rlx train | evaluate | report` command line, and run folders whose weights are pinned by a
 SHA-256 hash. The v0.1 results were withdrawn. They could not be regenerated from the
@@ -76,9 +81,11 @@ Summed over an episode this is exactly `−IS − λ·Σσ²x²`, the Almgren-Ch
 objective, enforced by an identity test. One λ is shared with the Almgren-Chriss baseline, so
 in the no-signal regime AC *is* the optimum of the RL reward.
 
-**1.3 Make the action relative to TWAP.** `a ∈ [−1, 1]` maps to a multiplier
-`m = (1 + a)² ∈ [0, 4]` on the TWAP rate. An untrained policy now starts at TWAP.
-DoubleDQN uses the grid `{0, ¼, ½, ¾, 1, 1¼, 1½, 2, 3, 4}`.
+**1.3 Make the action relative to TWAP.** `a ∈ [−1, 1]` sets a multiplier on the TWAP
+pace: −1 waits, 0 is TWAP, +1 liquidates everything now (`1 + a` below zero,
+`steps_left ** a` above). Every schedule is reachable, so the baselines run through the
+same action interface as the agents, and an untrained policy starts at TWAP. DoubleDQN
+uses the grid `{0, ¼, ½, ¾, 1, 1¼, 1½, 2, 3, 4}`.
 
 **1.4 Clean up the observation.** All features are O(1) and scale-free: inventory, time,
 price move in σ units, imbalance, volatility ratio, spread, and depth against a fixed

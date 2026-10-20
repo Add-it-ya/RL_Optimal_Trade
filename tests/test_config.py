@@ -91,10 +91,13 @@ def test_enum_fields_reject_non_strings():
 
 
 # =============================================================== nothing else moved
-def test_default_yaml_still_loads():
+def test_default_yaml_matches_the_code_defaults():
+    """config/default.yaml documents the calibrated defaults; it must not drift from them."""
+    from rl_execution.config import ExecutionConfig
+
     market, execution = load_config("config/default.yaml")
-    assert market.price_process == "abm"
-    assert market.imbalance_ou_scaling is False
+    assert market == MarketConfig()
+    assert execution.to_dict() == ExecutionConfig().to_dict()
     RunConfig(market=market, execution=execution).validate()
 
 

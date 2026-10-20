@@ -1,55 +1,56 @@
-# Default experiment configuration.
-# Two sections map onto MarketConfig and ExecutionConfig. Load with:
+# Default experiment configuration (identical to the MarketConfig / ExecutionConfig
+# defaults).  Two sections map onto MarketConfig and ExecutionConfig. Load with:
 #   from rl_execution.utils import load_config
 #   market, execution = load_config("config/default.yaml")
+#
+# Calibrated with scripts/calibrate.py for the default order (10,000 shares over 20 steps
+# of ~20 minutes): dumping at arrival costs ~158 bps, TWAP ~19 bps with ~104 bps of price
+# risk, the Almgren-Chriss optimum front-loads (first trade ~2.4x TWAP), and the book
+# imbalance predicts the next return with an information coefficient of ~0.075.
 
 market:
   initial_price: 100.0
   tick_size: 0.01
   n_levels: 10
-  base_spread: 0.02
+  base_spread: 0.02           # 2 bps on a $100 stock
   spread_vol: 0.30
   base_depth: 500.0
   level_growth: 0.15
   depth_vol: 0.25
-  volatility: 0.02
+  volatility: 0.004           # per step, i.e. ~1.8% over a 20-step day
   drift: 0.0
   mean_reversion: 0.0
-  vol_of_vol: 0.2
+  vol_of_vol: 0.0
 
   # --- Brownian-motion layer (rl_execution/envs/processes.py) ---
   # abm / gbm / ou select an explicit SDE with an exact discretisation.  The whole exogenous
   # market is drawn before the agent acts and market impact is an additive overlay, so two
   # strategies on one seed face the same market.  'abm' is the Almgren-Chriss world.
   price_process: abm
-  dt: 1.0                    # time spanned by one decision step, in volatility units
-  normal_method: ziggurat    # ziggurat | inverse_cdf (monotone; needed for QMC)
-  vol_process: iid_lognormal # none | iid_lognormal | expou (volatility clustering)
-  vol_persistence: 0.0       # AR(1) persistence of ln(sigma) under 'expou'
-  leverage_corr: 0.0         # corr(dW_price, dW_vol); negative = vol rises as price falls
-  imbalance_ou_scaling: false  # true => sqrt(1-phi^2) innovations (stationary unit variance)
+  dt: 1.0                     # time spanned by one decision step, in volatility units
+  normal_method: ziggurat     # ziggurat | inverse_cdf (monotone; needed for QMC)
+  vol_process: none           # none | iid_lognormal | expou (volatility clustering)
+  vol_persistence: 0.0        # AR(1) persistence of ln(sigma) under 'expou'
+  leverage_corr: 0.0          # corr(dW_price, dW_vol); negative = vol rises as price falls
+  imbalance_ou_scaling: true  # sqrt(1-phi^2) innovations (stationary unit variance)
 
-  permanent_impact: 5.0e-6
-  temporary_impact: 1.0e-5
+  permanent_impact: 2.0e-5    # mid shift per share traded
+  temporary_impact: 1.5e-4    # per-share concession per share traded in one step
   imbalance_persistence: 0.85
   imbalance_strength: 0.40
-  imbalance_alpha: 0.05
+  imbalance_alpha: 4.5e-4     # signal strength: observed IC ~0.075
   base_market_volume: 2000.0
   volume_vol: 0.35
   volume_u_shape: 0.5
 
 execution:
   total_inventory: 10000.0
-  horizon: 20
-  side: sell                 # buy | sell
-  action_type: continuous    # discrete | continuous
-  n_discrete_actions: 11
+  horizon: 20                 # the last step liquidates whatever is left
+  side: sell                  # buy | sell
+  action_type: continuous     # discrete | continuous
   commission_per_share: 0.0
   commission_bps: 1.0
   latency_steps: 0.0          # > 0: fills land part-way into the step (Brownian bridge)
-  force_liquidation: true
   reward:
-    risk_aversion: 0.5
-    temp_impact_penalty: 1.0
-    unexecuted_penalty: 10.0
-    reward_scale: 10000.0
+    risk_aversion: 1.4e-3     # lambda per bps^2 of carried variance (AC kappa*T ~2.5)
+    reward_scale: 1.0         # reward units per bps of objective

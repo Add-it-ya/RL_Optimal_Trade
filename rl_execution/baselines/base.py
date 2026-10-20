@@ -6,18 +6,20 @@ All strategies (baselines *and* the wrappers around trained RL agents) implement
     strat.reset(env)
     action = strat.act(obs, info)   # returns an action in env.action_space
 
-Baselines decide a *fraction of remaining inventory* to trade and convert it to the env's
-action space; they may read the (already public) state of the bound environment, which is
-appropriate for scheduling rules such as TWAP / VWAP / POV / Almgren-Chriss.
+Baselines decide a *fraction of remaining inventory* to trade and convert it with
+:meth:`~rl_execution.envs.ExecutionEnv.fraction_to_action`, so they go through exactly the
+same action interface as the agents.  They may read the (already public) state of the bound
+environment, which is appropriate for scheduling rules such as TWAP / VWAP / Almgren-Chriss.
+
+A strategy with free parameters can implement :meth:`BaseStrategy.fit`, which the
+cross-regime runner calls on validation seeds before evaluating it on test seeds.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 
 import numpy as np
-
-from rl_execution.config import ActionType
 
 
 class BaseStrategy:
@@ -28,6 +30,13 @@ class BaseStrategy:
     def reset(self, env) -> None:
         """Bind the strategy to an environment instance at the start of an episode."""
         self.env = env
+
+    def fit(self, env_factory: Callable[[], Any], n_episodes: int, base_seed: int) -> None:
+        """Tune free parameters on validation episodes (no-op for parameter-free rules)."""
+
+    def params(self) -> Dict[str, Any]:
+        """Fitted / configured parameters worth recording next to the results."""
+        return {}
 
     # -- convenient views onto the bound environment ----------------------------
     @property
@@ -52,12 +61,8 @@ class BaseStrategy:
 
     # -- action conversion ------------------------------------------------------
     def _fraction_to_action(self, fraction: float):
-        """Convert a fraction in [0, 1] to a valid action for the bound env."""
-        fraction = float(np.clip(fraction, 0.0, 1.0))
-        if self.env.exec_config.action_type is ActionType.DISCRETE:
-            grid = self.env._action_grid
-            return int(np.argmin(np.abs(grid - fraction)))
-        return np.array([fraction], dtype=np.float32)
+        """Convert a fraction of the remaining inventory to an action for the bound env."""
+        return self.env.fraction_to_action(float(np.clip(fraction, 0.0, 1.0)))
 
     def _decide_fraction(self, obs: np.ndarray, info: Dict[str, Any]) -> float:
         """Return the fraction of *remaining* inventory to execute this step."""

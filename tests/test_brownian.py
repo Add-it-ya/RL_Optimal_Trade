@@ -361,7 +361,7 @@ def test_generate_market_paths_shapes_and_ranges():
 
 # =============================================================== simulator integration
 def _mid_path(fraction, cfg, seed=5, horizon=12):
-    env = ExecutionEnv(cfg, ExecutionConfig(horizon=horizon, force_liquidation=False))
+    env = ExecutionEnv(cfg, ExecutionConfig(horizon=horizon))
     env.reset(seed=seed)
     out = [env.market.mid]
     for _ in range(horizon):
@@ -542,8 +542,10 @@ def test_ac_schedule_matches_itself_and_differs_from_twap():
         schedule_gap_table(results, reference="missing")
 
 
-def test_schedule_gap_handles_ragged_and_empty_input():
-    assert schedule_gap([0.5, 0.5], [0.5, 0.5, 0.1]) == pytest.approx(0.0)
+def test_schedule_gap_pads_ragged_input_and_handles_empty():
+    # the shorter schedule traded nothing after it ended
+    assert schedule_gap([0.5, 0.5], [0.5, 0.5, 0.1]) == pytest.approx(0.1)
+    assert schedule_gap([1.0], [0.5, 0.5]) == pytest.approx(1.0)
     assert np.isnan(schedule_gap([], []))
 
 

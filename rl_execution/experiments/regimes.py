@@ -20,26 +20,29 @@ import numpy as np
 
 from rl_execution.config import MarketConfig
 
-# A modest, exploitable order-book-imbalance alpha is present across regimes so that a
-# *state-reactive* policy can add value over static schedules; drift magnitudes are kept
-# small relative to per-step volatility so that timing skill (not trivial front-loading)
-# is what differentiates strategies.  The price follows arithmetic Brownian motion (the
-# Almgren-Chriss world) unless a regime says otherwise.
-_BASE = MarketConfig(imbalance_alpha=0.05, imbalance_strength=0.40, imbalance_persistence=0.85)
+# Every regime starts from the calibrated default market (see MarketConfig and
+# rl_execution.experiments.calibration): arithmetic Brownian motion, impact and price risk
+# that genuinely trade off, and a realistic order-book signal (IC ~0.075).  Regimes then
+# move one axis at a time.  Drifts are kept small (4% of the per-step volatility) so that
+# timing skill, not trivial front-loading, is what differentiates strategies.
+_BASE = MarketConfig()
+_SIGMA = _BASE.volatility
 
 REGIMES: Dict[str, MarketConfig] = {
     # --- volatility ---
-    "low_vol": replace(_BASE, volatility=0.008, vol_of_vol=0.0),
-    "medium_vol": replace(_BASE, volatility=0.02, vol_of_vol=0.2),
-    "high_vol": replace(_BASE, volatility=0.05, vol_of_vol=0.5),
-    # --- liquidity ---
+    "low_vol": replace(_BASE, volatility=0.5 * _SIGMA),
+    "medium_vol": replace(_BASE, vol_process="iid_lognormal", vol_of_vol=0.2),
+    "high_vol": replace(
+        _BASE, volatility=2.0 * _SIGMA, vol_process="iid_lognormal", vol_of_vol=0.5
+    ),
+    # --- liquidity (impact scales with how thin the book is) ---
     "thin": replace(
         _BASE,
         base_depth=200.0,
         base_spread=0.05,
         base_market_volume=800.0,
-        temporary_impact=3.0e-5,
-        permanent_impact=1.2e-5,
+        temporary_impact=2.0 * _BASE.temporary_impact,
+        permanent_impact=2.0 * _BASE.permanent_impact,
     ),
     "normal_liquidity": replace(_BASE),
     "deep": replace(
@@ -47,13 +50,13 @@ REGIMES: Dict[str, MarketConfig] = {
         base_depth=1500.0,
         base_spread=0.01,
         base_market_volume=6000.0,
-        temporary_impact=4.0e-6,
-        permanent_impact=2.0e-6,
+        temporary_impact=0.5 * _BASE.temporary_impact,
+        permanent_impact=0.5 * _BASE.permanent_impact,
     ),
-    # --- trend (drift small vs sqrt-horizon volatility) ---
-    "bull": replace(_BASE, drift=0.0008),
-    "bear": replace(_BASE, drift=-0.0008),
-    "sideways": replace(_BASE, price_process="ou", drift=0.0, mean_reversion=0.10),
+    # --- trend ---
+    "bull": replace(_BASE, drift=0.04 * _SIGMA),
+    "bear": replace(_BASE, drift=-0.04 * _SIGMA),
+    "sideways": replace(_BASE, price_process="ou", mean_reversion=0.10),
 }
 
 # --- Brownian-process regimes -------------------------------------------------------
@@ -77,17 +80,16 @@ REGIMES.update(
         ),
         # Geometric Brownian motion: same economics as the default regime, different price
         # model.  Used to check that strategy rankings are not an artefact of the dynamics.
-        "gbm_medium": replace(_BROWNIAN, volatility=0.02, vol_process="none", vol_of_vol=0.0),
+        "gbm_medium": replace(_BROWNIAN),
         # Volatility clustering via an exponential-OU log-volatility process.  This is what
         # gives the env's `volatility` observation feature genuine forecast value.
         "clustered_vol": replace(
-            _BROWNIAN, volatility=0.02, vol_process="expou", vol_of_vol=0.5, vol_persistence=0.90
+            _BROWNIAN, vol_process="expou", vol_of_vol=0.5, vol_persistence=0.90
         ),
         # Clustering plus the leverage effect: volatility rises as the price falls, which is
         # the asymmetry a seller working a large order actually faces.
         "leverage": replace(
             _BROWNIAN,
-            volatility=0.02,
             vol_process="expou",
             vol_of_vol=0.5,
             vol_persistence=0.90,
@@ -138,24 +140,28 @@ def randomized_market_config(
 ) -> MarketConfig:
     """Sample a market config spanning the regime axes (for robust training).
 
+    The ranges sit around the calibrated default and deliberately stop short of the
+    ``low_vol`` / ``high_vol`` / ``thin`` / ``deep`` presets, so those can serve as
+    out-of-distribution tests for an agent trained on this family.
+
     With ``brownian=True`` the sampler additionally randomises over price process,
     volatility clustering and the leverage correlation, so a domain-randomised agent also
     generalises across *price models*, not just across parameters of one model.
     """
     rng = rng or np.random.default_rng()
-    cfg = MarketConfig(
-        volatility=float(rng.uniform(0.008, 0.05)),
-        vol_of_vol=float(rng.uniform(0.0, 0.5)),
-        drift=float(rng.uniform(-0.001, 0.001)),
+    cfg = replace(
+        _BASE,
+        volatility=float(rng.uniform(0.75, 1.25) * _SIGMA),
+        vol_process="iid_lognormal",
+        vol_of_vol=float(rng.uniform(0.0, 0.3)),
+        drift=float(rng.uniform(-0.025, 0.025) * _SIGMA),
         mean_reversion=float(rng.choice([0.0, 0.0, 0.10])),
-        base_depth=float(rng.uniform(200.0, 1500.0)),
-        base_spread=float(rng.uniform(0.01, 0.05)),
-        base_market_volume=float(rng.uniform(800.0, 6000.0)),
-        temporary_impact=float(rng.uniform(4.0e-6, 3.0e-5)),
-        permanent_impact=float(rng.uniform(2.0e-6, 1.2e-5)),
-        imbalance_alpha=float(rng.uniform(0.03, 0.07)),
-        imbalance_strength=0.40,
-        imbalance_persistence=0.85,
+        base_depth=float(rng.uniform(300.0, 1000.0)),
+        base_spread=float(rng.uniform(0.01, 0.03)),
+        base_market_volume=float(rng.uniform(1500.0, 3000.0)),
+        temporary_impact=float(rng.uniform(0.7, 1.4) * _BASE.temporary_impact),
+        permanent_impact=float(rng.uniform(0.7, 1.4) * _BASE.permanent_impact),
+        imbalance_alpha=float(rng.uniform(0.5, 1.5) * _BASE.imbalance_alpha),
     )
     if cfg.mean_reversion > 0:
         cfg = replace(cfg, price_process="ou")

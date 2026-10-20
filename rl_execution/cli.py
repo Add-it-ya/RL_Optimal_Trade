@@ -14,9 +14,11 @@ Examples
     training never sees, and writes ``results/<experiment>/`` (per-episode CSV, summary
     table, figures).
 ``report``
-    Aggregates ``results/<experiment>/`` into ``REPORT.md``: one row per strategy with
-    mean and spread of implementation shortfall, the paired difference against TWAP with a
-    95% CI (across training seeds for RL agents) and Holm-adjusted p-values.
+    Aggregates ``results/<experiment>/`` into ``REPORT.md``: one row per strategy with the
+    mean objective (implementation shortfall + Almgren-Chriss risk penalty), the level,
+    spread and tail of implementation shortfall, how many steps it trades in, and the paired
+    gap to Almgren-Chriss with a 95% CI (across training seeds for RL agents) and
+    Holm-adjusted p-values.
 """
 
 from __future__ import annotations
@@ -205,6 +207,10 @@ def cmd_evaluate(args) -> None:
             "base_seed": args.base_seed,
             "antithetic": bool(args.antithetic),
             "runs": runs_meta,
+            "params": {
+                regime: {name: res.params for name, res in by_strat.items() if res.params}
+                for regime, by_strat in results.items()
+            },
         },
         out / "meta.json",
     )
@@ -248,66 +254,77 @@ def _pvalue(diffs: np.ndarray) -> float:
 
 def comparison_table(
     episodes: pd.DataFrame,
-    benchmark: str = "TWAP",
+    benchmark: str = "AlmgrenChriss",
+    metric: str = "objective_bps",
     block: int = 1,
     n_boot: int = 5_000,
 ) -> pd.DataFrame:
-    """One row per (regime, agent): IS level and spread, and the paired gap to ``benchmark``.
+    """One row per (regime, agent): objective, IS level / spread / tail, and the paired gap.
 
-    Every strategy faced the same test seeds, so ``IS - IS_benchmark`` is formed episode by
-    episode (common random numbers).  For an agent trained on several seeds the training
-    seed is the unit of analysis: each seed contributes its mean paired gap, and the CI and
-    p-value are taken across seeds.  A single-seed agent or a baseline falls back to the
-    paired episode-level bootstrap (``block=2`` for antithetic pairs).
+    ``vs_<benchmark>`` is the mean of ``metric - metric_benchmark`` formed episode by
+    episode -- every strategy faced the same test seeds (common random numbers), so the
+    shared price risk cancels.  For an agent trained on several seeds the training seed is
+    the unit of analysis: each seed contributes its mean paired gap, and the CI and p-value
+    are taken across seeds.  A single-seed agent or a baseline falls back to the paired
+    episode-level bootstrap (``block=2`` for antithetic pairs).  Columns missing from
+    ``episodes`` are reported as NaN.
     """
     from rl_execution.metrics.stats import adjust_pvalues, bootstrap_ci, paired_bootstrap_ci
 
+    nan = float("nan")
+
+    def column(frame: pd.DataFrame, name: str) -> np.ndarray:
+        if name not in frame:
+            return np.full(len(frame), nan)
+        return frame.sort_values("episode")[name].to_numpy(dtype=float)
+
     rows = []
     for regime, reg in episodes.groupby("regime", sort=False):
-        bench = reg[reg["strategy"] == benchmark].sort_values("episode")
+        bench = reg[reg["strategy"] == benchmark]
         if bench.empty:
             continue
-        bench_is = bench["implementation_shortfall_bps"].to_numpy()
+        bench_m = column(bench, metric)
         for agent, grp in reg.groupby("agent", sort=False):
-            per_seed_gap, pooled_is = [], []
-            last_is = np.empty(0)
+            per_seed_gap = []
+            last_m: np.ndarray = np.empty(0)
             for _, run in grp.groupby("strategy", sort=False):
-                is_bps = run.sort_values("episode")["implementation_shortfall_bps"].to_numpy()
-                n = min(is_bps.size, bench_is.size)
-                per_seed_gap.append(float(np.mean(is_bps[:n] - bench_is[:n])))
-                pooled_is.append(is_bps)
-                last_is = is_bps[:n]
-            all_is = np.concatenate(pooled_is)
+                m = column(run, metric)
+                n = min(m.size, bench_m.size)
+                per_seed_gap.append(float(np.mean(m[:n] - bench_m[:n])))
+                last_m = m[:n]
+            is_bps = column(grp, "implementation_shortfall_bps")
             trained = bool(grp["seed"].notna().any())
             row = {
                 "regime": regime,
                 "strategy": agent,
                 "n_seeds": len(per_seed_gap) if trained else "—",
-                "IS_bps": float(all_is.mean()),
-                "IS_std": float(all_is.std(ddof=1)) if all_is.size > 1 else float("nan"),
-                "IS_p95": float(np.quantile(all_is, 0.95)),
+                "J_bps": float(np.mean(column(grp, "objective_bps"))),
+                "IS_bps": float(is_bps.mean()),
+                "IS_std": float(is_bps.std(ddof=1)) if is_bps.size > 1 else nan,
+                "IS_p95": float(np.quantile(is_bps, 0.95)),
+                "eff_steps": float(np.mean(column(grp, "effective_steps"))),
                 f"vs_{benchmark}": float(np.mean(per_seed_gap)),
-                "ci_low": float("nan"),
-                "ci_high": float("nan"),
-                "p_value": float("nan"),
+                "ci_low": nan,
+                "ci_high": nan,
+                "p_value": nan,
             }
             if agent != benchmark:
                 if len(per_seed_gap) >= 2:
                     row["ci_low"], row["ci_high"] = bootstrap_ci(per_seed_gap, n_boot=n_boot, rng=0)
                     row["p_value"] = _pvalue(np.asarray(per_seed_gap))
                 else:
-                    n = last_is.size
+                    n = last_m.size
                     row["ci_low"], row["ci_high"] = paired_bootstrap_ci(
-                        last_is, bench_is[:n], n_boot=n_boot, rng=0, block=block
+                        last_m, bench_m[:n], n_boot=n_boot, rng=0, block=block
                     )
-                    diff = last_is - bench_is[:n]
+                    diff = last_m - bench_m[:n]
                     if block > 1 and diff.size // block >= 2:
                         diff = diff[: (diff.size // block) * block].reshape(-1, block).mean(axis=1)
                     row["p_value"] = _pvalue(diff)
             rows.append(row)
     table = pd.DataFrame(rows)
-    tested = table["p_value"].notna()
     table["p_holm"] = np.nan
+    tested = table["p_value"].notna() if not table.empty else pd.Series(dtype=bool)
     if tested.any():
         _, p_adj = adjust_pvalues(table.loc[tested, "p_value"].to_numpy(), method="holm")
         table.loc[tested, "p_holm"] = p_adj
@@ -334,7 +351,7 @@ def cmd_report(args) -> None:
     episodes = pd.read_csv(res_dir / "episodes.csv")
     meta = load_json(res_dir / "meta.json")
     block = 2 if meta.get("antithetic") else 1
-    table = comparison_table(episodes, benchmark=args.benchmark, block=block)
+    table = comparison_table(episodes, benchmark=args.benchmark, metric=args.metric, block=block)
     table.to_csv(res_dir / "comparison.csv", index=False)
 
     # training curves, one smoothed line per (agent, seed)
@@ -352,15 +369,22 @@ def cmd_report(args) -> None:
         f"{', antithetic pairs' if block == 2 else ''})",
         f"- Trained runs: {len(meta.get('runs', []))}; code version(s): "
         + (", ".join(s[:10] for s in shas) or "n/a"),
-        f"- `vs_{args.benchmark}` is the mean paired IS difference (negative = cheaper than "
-        f"{args.benchmark}). For multi-seed agents the 95% CI and p-value are across training "
-        "seeds; `p_holm` is Holm-adjusted over every row of every table.",
+        "- `J_bps` is the objective the agents are rewarded on: implementation shortfall plus "
+        "the Almgren-Chriss penalty on carried variance (lower is better). `eff_steps` is how "
+        "many steps the order is effectively spread over (20 = TWAP, 1 = one block trade).",
+        f"- `vs_{args.benchmark}` is the mean paired difference in `{args.metric}` (negative = "
+        f"better than {args.benchmark}). For multi-seed agents the 95% CI and p-value are "
+        "across training seeds; `p_holm` is Holm-adjusted over every row of every table.",
         "",
     ]
-    cols = ["strategy", "n_seeds", "IS_bps", "IS_std", "IS_p95", f"vs_{args.benchmark}"]
-    cols += ["ci_low", "ci_high", "p_holm"]
+    cols = ["strategy", "n_seeds", "J_bps", "IS_bps", "IS_std", "IS_p95", "eff_steps"]
+    cols += [f"vs_{args.benchmark}", "ci_low", "ci_high", "p_holm"]
+    fitted = meta.get("params", {})
     for regime, sub in table.groupby("regime", sort=False):
-        parts += [f"## {regime}", "", _markdown_table(sub[cols].sort_values("IS_bps")), ""]
+        parts += [f"## {regime}", "", _markdown_table(sub[cols].sort_values("J_bps")), ""]
+        beta = fitted.get(regime, {}).get("SignalRule", {}).get("beta")
+        if beta is not None:
+            parts += [f"SignalRule coefficient fitted on validation seeds: beta = {beta}.", ""]
         for fig in ("schedule", "risk_vs_cost", "is_distribution"):
             if (res_dir / "figures" / f"{regime}_{fig}.png").exists():
                 parts.append(f"![{regime} {fig}](figures/{regime}_{fig}.png)")
@@ -407,7 +431,13 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("report", help="aggregate evaluation results into REPORT.md")
     r.add_argument("--experiment", required=True)
     r.add_argument("--results", default=None, help="default: results/<experiment>")
-    r.add_argument("--benchmark", default="TWAP")
+    r.add_argument("--benchmark", default="AlmgrenChriss")
+    r.add_argument(
+        "--metric",
+        default="objective_bps",
+        choices=["objective_bps", "implementation_shortfall_bps"],
+        help="what the paired comparison is made on",
+    )
     r.set_defaults(func=cmd_report)
     return parser
 

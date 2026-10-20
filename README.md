@@ -20,8 +20,10 @@ strategies used on trading desks, including the closed-form **Almgren-Chriss** o
 |------|-----------------|
 | **Environment** | A **Gymnasium** env over a simulated **limit order book**: depth ladder, spread and imbalance dynamics, convex book-walk slippage, temporary + permanent impact, commissions, optional latency. |
 | **Price dynamics** | Explicit **Brownian-motion** processes with exact discretisations: **arithmetic** BM (the Almgren-Chriss world), **geometric** BM, **Ornstein-Uhlenbeck**, plus **exp-OU stochastic volatility** with clustering and a **leverage** correlation. Named RNG substreams, **Brownian-bridge** latency fills and **antithetic** variates. |
-| **Actions** | Discrete grid *and* continuous Box: the fraction of remaining inventory to trade. |
-| **Baselines** | **TWAP**, **VWAP** and **Almgren-Chriss** (closed-form risk-averse optimum). |
+| **Calibration** | Impact and price risk genuinely trade off: dumping the order at arrival costs ~158 bps, TWAP ~19 bps with ~104 bps of price risk, and the order-book signal has a realistic information coefficient (~0.075). Pinned by tests; `scripts/calibrate.py` reports it. |
+| **Objective** | The Almgren-Chriss mean-variance objective, `J = IS + λ·Σ(σ_t x_t)²` in bps. Mark-to-market rewards sum to exactly `−J`, and the Almgren-Chriss baseline shares the same λ, so with no signal its schedule is the optimum. |
+| **Actions** | Relative to TWAP: `a ∈ [−1, 1]`, where −1 waits, 0 trades at the TWAP pace and +1 liquidates now, so an untrained policy starts as TWAP. Discrete agents choose from a grid of TWAP multipliers. |
+| **Baselines** | **TWAP**, **VWAP**, **Almgren-Chriss** (closed-form optimum), plus the nulls an agent must beat: **DumpAtStart**, **WaitThenDump** and **SignalRule** (AC pace tilted by the book signal, one coefficient fitted on validation seeds). |
 | **RL agents** | **PPO** (Stable-Baselines3) and **DQN / Double DQN** written from scratch in PyTorch. |
 | **Evaluation** | Every strategy runs on the same pre-drawn market paths (**common random numbers**), so comparisons are paired. Bootstrap CIs with the **training seed as the unit of analysis**, and **Holm** correction across all comparisons. |
 | **Reproducibility** | Each run folder records its config, git SHA, library versions and the **SHA-256 of its weights**; loading refuses weights that don't match. |
@@ -67,7 +69,7 @@ from rl_execution.backtest import compare_strategies, paired_is_table
 from rl_execution.experiments import get_regime
 
 factory = lambda: ExecutionEnv(get_regime("abm_ac_optimal"), ExecutionConfig(side="sell"))
-results = compare_strategies(factory, {"TWAP": TWAP(), "AC": AlmgrenChriss(1e-6)},
+results = compare_strategies(factory, {"TWAP": TWAP(), "AC": AlmgrenChriss()},
                              n_episodes=400, progress=False, antithetic=True)
 print(paired_is_table(results, benchmark="TWAP", block=2))
 ```
@@ -161,11 +163,12 @@ Pick the `cuXXX` wheel that matches the CUDA version `nvidia-smi` reports.
 
 ## ⚠️ Interpreting the numbers
 
-The regime presets embed an **intentionally amplified** order-book-imbalance signal
-(`imbalance_alpha`), far more predictive than real order-book signals, so that a
-state-reactive policy has something to learn. Basis-point improvements obtained with it are
-**not** realistic P&L. Report any improvement together with the signal strength that produced
-it, and use `abm_ac_optimal` (no signal) to check that a learner recovers the known optimum.
+The default market's order-book signal is calibrated to a realistic strength (observed
+information coefficient ~0.075, per-step R² under 1%). Any edge a learned policy shows is
+only as meaningful as that calibration: report improvements together with the signal
+strength that produced them, compare against `SignalRule` (the two-line way to use the same
+signal), and use `abm_ac_optimal` (no signal) to check that a learner recovers the known
+optimum. The simulator is a research tool, not a P&L forecast.
 
 ## ✅ Testing
 

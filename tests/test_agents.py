@@ -86,3 +86,15 @@ def test_agent_strategy_runs_episode():
     summary, hist, rewards, _ = run_episode(env, AgentStrategy(agent, "PPO"), seed=0)
     assert summary["unexecuted_shares"] == pytest.approx(0.0, abs=1e-6)
     assert np.isfinite(rewards.sum())
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_untrained_ppo_starts_as_twap(seed):
+    """With the TWAP-relative action an untrained policy (mean action ~0) trades at the
+    TWAP pace -- not "wait, then dump", which is where v0.1's [0, 1] action started."""
+    env = _env("ppo")
+    agent = make_agent("ppo", env, seed=seed)
+    _, hist, _, _ = run_episode(env, AgentStrategy(agent, "PPO"), seed=0)
+    schedule = hist["shares"].to_numpy() / env.total_inventory
+    assert len(schedule) == env.horizon
+    assert np.allclose(schedule, 1.0 / env.horizon, atol=0.01)

@@ -103,6 +103,12 @@ class MarketConfig:
     The order book is re-quoted each step around the current mid with a depth profile
     that grows away from the touch and an imbalance driven by a latent AR(1) factor that
     is (weakly) predictive of the next price move.
+
+    The defaults are calibrated (see :mod:`rl_execution.experiments.calibration` and
+    ``scripts/calibrate.py``) so that impact and price risk genuinely trade off for the
+    default order of 10,000 shares over 20 steps of ~20 minutes: dumping the order at
+    arrival costs ~150 bps, TWAP ~20 bps with ~100 bps of price risk, and the order-book
+    imbalance predicts the next return with a realistic information coefficient (~0.075).
     """
 
     # --- price level / discretisation ---
@@ -118,7 +124,7 @@ class MarketConfig:
     depth_vol: float = 0.25  # relative log-noise applied to resting size
 
     # --- price dynamics (per unit time; one step spans ``dt``) ---
-    volatility: float = 0.02  # std of the mid return per unit time (fraction of price)
+    volatility: float = 0.004  # std of the mid return per unit time (fraction of price)
     drift: float = 0.0  # expected return per unit time (regime: +bull / -bear)
     mean_reversion: float = 0.0  # OU pull toward initial price (sideways regime)
     vol_of_vol: float = 0.0  # stochastic-volatility log-noise on sigma
@@ -127,17 +133,17 @@ class MarketConfig:
     price_process: str = "abm"  # abm | gbm | ou
     dt: float = 1.0  # time spanned by one decision step, in volatility units
     normal_method: str = "ziggurat"  # ziggurat | inverse_cdf (monotone; needed for QMC)
-    vol_process: str = "iid_lognormal"  # none | iid_lognormal | expou (clustering)
+    vol_process: str = "none"  # none | iid_lognormal | expou (clustering)
     vol_persistence: float = 0.0  # AR(1) persistence of ln(sigma) under 'expou'
     leverage_corr: float = 0.0  # corr(dW_price, dW_vol); < 0 = vol rises as price falls
-    imbalance_ou_scaling: bool = False  # sqrt(1-phi^2) innovations => unit-variance imbalance
+    imbalance_ou_scaling: bool = True  # sqrt(1-phi^2) innovations => unit-variance imbalance
 
     # --- microstructure / impact ---
-    permanent_impact: float = 5.0e-6  # mid shift per share executed (Kyle-lambda style)
-    temporary_impact: float = 1.0e-5  # extra per-share concession beyond walking the book
+    permanent_impact: float = 2.0e-5  # mid shift per share executed (Kyle-lambda style)
+    temporary_impact: float = 1.5e-4  # extra per-share concession beyond walking the book
     imbalance_persistence: float = 0.85  # AR(1) coefficient of the latent imbalance factor
-    imbalance_strength: float = 0.30  # how strongly imbalance skews depth between sides
-    imbalance_alpha: float = 0.0  # how strongly imbalance forecasts the next return
+    imbalance_strength: float = 0.40  # how strongly imbalance skews depth between sides
+    imbalance_alpha: float = 4.5e-4  # next-return forecast power of imbalance (IC ~0.075)
 
     # --- ambient (background) traded volume, used by POV / VWAP baselines ---
     base_market_volume: float = 2000.0  # ~shares traded by the rest of the market per step
@@ -170,18 +176,23 @@ class MarketConfig:
 
 @dataclass
 class RewardConfig:
-    """Weights of the multi-component reward.
+    """The execution objective the agent is rewarded on.
 
-    The per-step reward is the negative *implementation-shortfall contribution* of the
-    fill (which already embeds slippage, spread and temporary impact through the realised
-    price), minus an inventory-risk term and an explicit temporary-impact penalty.  The
-    sum over an episode therefore approximates ``-(implementation_shortfall + risk)``.
+    Every episode is scored on the Almgren-Chriss mean-variance objective, in basis points
+    of the arrival notional::
+
+        J = implementation_shortfall + risk_aversion * sum_t (sigma_t * x_t)^2
+
+    where ``x_t`` is the fraction of the order still held over step ``t`` and ``sigma_t``
+    that step's price volatility in bps.  The per-step rewards sum to exactly
+    ``-J * reward_scale`` (see :class:`~rl_execution.envs.ExecutionEnv`), and the
+    Almgren-Chriss baseline uses the same ``risk_aversion`` (converted by
+    :func:`ac_risk_aversion`), so in a signal-free arithmetic-Brownian market its schedule
+    is the optimum of exactly this objective.
     """
 
-    risk_aversion: float = 0.5  # weight on running inventory variance (Almgren-Chriss lambda)
-    temp_impact_penalty: float = 1.0  # extra penalty on temporary impact cost
-    unexecuted_penalty: float = 10.0  # multiplier on the cost of force-liquidated leftover
-    reward_scale: float = 1.0e4  # scale shortfall (fractions) into basis points
+    risk_aversion: float = 1.4e-3  # lambda per bps^2 of carried variance (AC kappa*T ~2.5)
+    reward_scale: float = 1.0  # reward units per bps of objective
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -197,18 +208,16 @@ class ExecutionConfig:
     """Parameters of the execution *task* (the parent order to be worked)."""
 
     total_inventory: float = 10_000.0  # shares of the parent order
-    horizon: int = 20  # number of decision steps (e.g. trading windows)
+    horizon: int = 20  # number of decision steps (e.g. trading windows); the last one
+    # always liquidates whatever is left
     side: Side = Side.SELL
     action_type: ActionType = ActionType.CONTINUOUS
-    n_discrete_actions: int = 11  # granularity of the discrete action grid in [0, 1]
 
     # --- frictions ---
     commission_per_share: float = 0.0  # fixed cash cost per share
     commission_bps: float = 1.0  # proportional fee in basis points of notional
     latency_steps: float = 0.0  # fractional step delay between decision and fill
 
-    # --- termination behaviour ---
-    force_liquidation: bool = True  # liquidate any leftover on the final step
     reward: RewardConfig = field(default_factory=RewardConfig)
 
     def __post_init__(self) -> None:
@@ -231,6 +240,18 @@ class ExecutionConfig:
         known = {f.name for f in fields(cls)}
         kwargs = {k: v for k, v in d.items() if k in known}
         return cls(**kwargs)
+
+
+def ac_risk_aversion(market: MarketConfig, execution: ExecutionConfig) -> float:
+    """Almgren-Chriss ``lambda`` (per cash^2) equivalent to the reward's ``risk_aversion``.
+
+    The reward penalises variance in bps of arrival notional ``N = S0 * X``; Almgren-Chriss
+    penalises it in cash.  Since ``cost_bps = cost_cash * 1e4 / N``, the objectives
+    ``E[c_bps] + lambda_bps Var[c_bps]`` and ``E[c] + lambda_AC Var[c]`` share a minimiser
+    exactly when ``lambda_AC = lambda_bps * 1e4 / N``.
+    """
+    notional = float(market.initial_price) * float(execution.total_inventory)
+    return float(execution.reward.risk_aversion) * 1e4 / notional
 
 
 @dataclass

@@ -6,6 +6,49 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Changed: the problem formulation (roadmap Phase 1)
+- **Calibrated market defaults** so impact and price risk trade off: per-step volatility
+  0.004 (was 0.02), temporary impact 1.5e-4 (was 1e-5), permanent impact 2e-5 (was 5e-6),
+  stationary imbalance scaling on, and `imbalance_alpha` 4.5e-4 for an observed information
+  coefficient of ~0.075 (v0.1's signal was ~0.43). Dumping at arrival now costs ~158 bps and
+  TWAP ~19 bps with ~104 bps of price risk. `rl_execution.experiments.calibration` and
+  `scripts/calibrate.py` measure all of this and solve for the signal strength and risk
+  aversion; `tests/test_calibration.py` pins the bands. All regimes and the domain
+  randomiser were rebuilt around the new defaults; the randomiser's ranges stop short of the
+  `low_vol` / `high_vol` / `thin` / `deep` presets so those can be held out.
+- **Reward = the Almgren-Chriss objective, exactly.** Mark-to-market rewards (fill cost
+  against the decision-time mid, plus the P&L of the inventory still held, minus
+  `lambda * (sigma_t x)^2`) sum to exactly `-(IS + lambda * sum sigma^2 x^2)`, tested to
+  1e-8 across price processes, sides and latency. The risk term uses the model volatility
+  for the step (the old realised-volatility estimate was zero at reset). Removed the
+  double-counted `temp_impact_penalty` and the `unexecuted_penalty` / `force_liquidation`
+  flags: the last step always liquidates. `risk_aversion` is now per bps^2 (1.4e-3, giving
+  an Almgren-Chriss urgency kappa*T ~2.5) and `reward_scale` defaults to 1 (rewards in bps).
+- **Almgren-Chriss uses the reward's own risk aversion** (`ac_risk_aversion`), so in a
+  signal-free arithmetic-Brownian market it is the optimum of the agents' objective.
+- **TWAP-relative action**: `a in [-1, 1]`, -1 waits, 0 trades at the TWAP pace, +1
+  liquidates now; the discrete space is a grid of TWAP multipliers. An untrained PPO policy
+  now starts as TWAP instead of "wait, then dump". Baselines go through the same interface
+  via `ExecutionEnv.fraction_to_action`.
+- **Observation**: 7 O(1) features (inventory, time, price move in sigma units, imbalance,
+  volatility ratio, spread, depth against a fixed reference); price move and imbalance are
+  signed by side; `prev_action` dropped; the depth feature now distinguishes thin and deep
+  markets.
+- **Report**: ranks on the objective `J`, compares against Almgren-Chriss by default
+  (`--benchmark`, `--metric`), and adds IS tail, effective steps traded and the fitted
+  SignalRule coefficient.
+
+### Added
+- Null baselines `DumpAtStart`, `WaitThenDump` and `SignalRule` (AC pace tilted by the book
+  signal, coefficient fitted per regime on validation seeds via the new `BaseStrategy.fit`).
+- `effective_steps` and `objective_bps` episode metrics.
+
+### Fixed
+- `_stack_mean` and `schedule_gap` truncated schedules to the shortest episode, so a
+  front-loaded policy looked half as far from TWAP as it is; both now zero-pad.
+
+### Changed: lean core
+
 A lean core: fewer moving parts, each one trained and tested properly.
 
 ### Removed

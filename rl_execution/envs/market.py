@@ -24,7 +24,6 @@ same market.  That is what makes the paired (common-random-number) comparisons i
 
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 
@@ -60,8 +59,6 @@ class MarketSimulator:
         :class:`~rl_execution.config.MarketConfig`.
     rng:
         Optional numpy ``Generator`` for reproducibility.
-    vol_window:
-        Number of recent returns used to estimate realised volatility.
     streams:
         Optional pre-built :class:`~rl_execution.envs.brownian.NoiseStreams`.  When omitted
         one is derived from ``rng``.
@@ -71,7 +68,6 @@ class MarketSimulator:
         self,
         config: MarketConfig,
         rng: np.random.Generator | None = None,
-        vol_window: int = 10,
         streams: Optional[NoiseStreams] = None,
     ) -> None:
         self.config = config
@@ -80,7 +76,6 @@ class MarketSimulator:
             streams if streams is not None else make_streams(self.rng, method=config.normal_method)
         )
         self.process = make_price_process(config)
-        self.vol_window = vol_window
         self.horizon = 1
         self.paths: Optional[MarketPaths] = None
         self.reset()
@@ -93,9 +88,6 @@ class MarketSimulator:
         self.t = 0
         self.shift = 0.0  # cumulative permanent impact (price units)
         self._intrastep_dev = 0.0  # transient deviation inside the current step
-        self._returns: deque[float] = deque(
-            [cfg.volatility] * self.vol_window, maxlen=self.vol_window
-        )
 
         # draw the whole exogenous episode before the agent acts (+2 points of headroom so
         # a caller that advances past the horizon still indexes a real value)
@@ -137,11 +129,14 @@ class MarketSimulator:
             noise=(self.paths.depth_bid[i], self.paths.depth_ask[i]),
         )
 
-    def recent_volatility(self) -> float:
-        """Realised volatility estimate from the recent return window."""
-        if len(self._returns) < 2:
-            return float(self.config.volatility)
-        return float(np.std(self._returns))
+    def step_std(self) -> float:
+        """Standard deviation of the price change over the current step, in price units.
+
+        This is the model volatility in force for the step about to be held (exact for
+        arithmetic BM, local for GBM / OU), which is what the Almgren-Chriss risk term
+        charges -- not a noisy estimate from past returns.
+        """
+        return float(np.sqrt(self.process.step_variance(self.mid, self.sigma)))
 
     # ------------------------------------------------------------------ execution
     def execute(self, side: Side, shares: float) -> ExecutionResult:
@@ -195,11 +190,8 @@ class MarketSimulator:
     def advance(self) -> LOBSnapshot:
         """Move the market one step along its pre-drawn exogenous path (no agent impact)."""
         self.t += 1
-        prev_mid = self.mid
         self._intrastep_dev = 0.0  # an intra-step latency deviation does not persist
         self._sync()
-        if prev_mid > 0:
-            self._returns.append((self.mid - prev_mid) / prev_mid)
         return self.snapshot
 
     def apply_latency(self, latency_steps: float) -> float:

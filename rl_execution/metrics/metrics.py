@@ -12,17 +12,25 @@ Definitions
 * **Execution cost** -- price-only slippage of the average fill price vs the arrival price.
 * **Market-impact cost** -- the cost of crossing the book: shares executed away from the
   contemporaneous mid (spread + temporary impact + book-walk), summed over fills.
-* **Sharpe ratio** -- cross-episode risk-adjusted execution quality, mean(-IS) / std(-IS).
+* **Objective** -- what the agents are rewarded on: IS plus the Almgren-Chriss variance
+  penalty ``lambda * sum_t (sigma_t x_t)^2`` for the inventory carried.
+* **Effective steps traded** -- ``1 / sum_t p_t^2`` for the fraction ``p_t`` of the order
+  traded at step ``t``: equal to the horizon for TWAP and 1 for a single block trade, so a
+  degenerate "dump everything at once" policy is visible at a glance.
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List
 
+import numpy as np
 import pandas as pd
 
 METRIC_COLUMNS = [
+    "objective_bps",
     "implementation_shortfall_bps",
+    "risk_penalty_bps",
+    "effective_steps",
     "execution_cost_bps",
     "market_impact_bps",
     "avg_fill_price",
@@ -60,8 +68,17 @@ def compute_episode_metrics(summary: Dict[str, Any], history: pd.DataFrame) -> D
     market_impact_bps = impact_cash / norm * 1e4
     temp_impact_bps = temp_cash / norm * 1e4
 
+    traded = history["shares"].to_numpy(dtype=float) / total if len(history) > 0 else np.zeros(0)
+    concentration = float(np.sum(traded**2))
+    effective_steps = 1.0 / concentration if concentration > 0 else 0.0
+
+    is_bps = float(summary["implementation_shortfall_bps"])
+    risk_bps = float(summary.get("risk_penalty_bps", 0.0))
     return {
-        "implementation_shortfall_bps": float(summary["implementation_shortfall_bps"]),
+        "objective_bps": float(summary.get("objective_bps", is_bps + risk_bps)),
+        "implementation_shortfall_bps": is_bps,
+        "risk_penalty_bps": risk_bps,
+        "effective_steps": effective_steps,
         "execution_cost_bps": float(execution_cost_bps),
         "market_impact_bps": float(market_impact_bps),
         "temp_impact_bps": float(temp_impact_bps),
@@ -75,24 +92,12 @@ def compute_episode_metrics(summary: Dict[str, Any], history: pd.DataFrame) -> D
 
 
 def aggregate_metrics(episode_metrics: List[Dict[str, float]]) -> Dict[str, float]:
-    """Aggregate a list of per-episode metric dicts into summary statistics.
-
-    Adds cross-episode Sharpe ratios for implementation shortfall (``is_sharpe``) and
-    cumulative reward (``reward_sharpe``).  Higher Sharpe = more *consistently* good
-    execution across episodes.
-    """
+    """Aggregate per-episode metric dicts into ``<metric>_mean`` / ``<metric>_std``."""
     if not episode_metrics:
         return {}
     df = pd.DataFrame(episode_metrics)
-    eps = 1e-9
     out: Dict[str, float] = {"n_episodes": float(len(df))}
-
     for col in df.columns:
         out[f"{col}_mean"] = float(df[col].mean())
         out[f"{col}_std"] = float(df[col].std(ddof=0))
-
-    neg_is = -df["implementation_shortfall_bps"].to_numpy()
-    out["is_sharpe"] = float(neg_is.mean() / (neg_is.std(ddof=0) + eps))
-    rew = df["cum_reward"].to_numpy()
-    out["reward_sharpe"] = float(rew.mean() / (rew.std(ddof=0) + eps))
     return out

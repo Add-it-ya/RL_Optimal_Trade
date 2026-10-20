@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from rl_execution.metrics import aggregate_metrics, compute_episode_metrics
 
@@ -53,12 +54,32 @@ def test_price_improvement_is_negative_cost():
     assert m["execution_cost_bps"] < 0  # sold above arrival -> improvement
 
 
-def test_aggregate_adds_sharpe():
+def test_aggregate_reports_means_and_spreads():
     eps = [
         compute_episode_metrics(_summary(avg_fill=f), _history(exec_price=f))
         for f in [99.4, 99.5, 99.6]
     ]
     agg = aggregate_metrics(eps)
-    assert "is_sharpe" in agg and np.isfinite(agg["is_sharpe"])
-    assert "implementation_shortfall_bps_mean" in agg
     assert agg["n_episodes"] == 3
+    assert np.isfinite(agg["implementation_shortfall_bps_mean"])
+    assert agg["implementation_shortfall_bps_std"] > 0
+
+
+def test_effective_steps_traded():
+    """TWAP over n steps counts as n steps; one block trade counts as 1."""
+    twap = compute_episode_metrics(_summary(), _history(steps=5))
+    assert twap["effective_steps"] == pytest.approx(5.0)
+    block = pd.DataFrame(
+        {
+            "shares": [10_000.0],
+            "mid_before": [100.0],
+            "exec_price": [99.5],
+            "temp_impact_cost": [0.0],
+        }
+    )
+    assert compute_episode_metrics(_summary(), block)["effective_steps"] == pytest.approx(1.0)
+
+
+def test_objective_defaults_to_shortfall_without_a_risk_penalty():
+    m = compute_episode_metrics(_summary(), _history())
+    assert m["objective_bps"] == pytest.approx(m["implementation_shortfall_bps"])
