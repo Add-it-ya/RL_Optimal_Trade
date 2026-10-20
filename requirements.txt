@@ -1,5 +1,5 @@
 # Core scientific stack
-numpy>=1.24,<2.0
+numpy>=1.24
 pandas>=2.0
 scipy>=1.10
 matplotlib>=3.7
@@ -7,13 +7,8 @@ seaborn>=0.12
 pyyaml>=6.0
 tqdm>=4.65
 
-# RL
+# RL (install a CUDA build of torch first on a GPU machine; see README)
 gymnasium>=0.29
 torch>=2.0
 stable-baselines3>=2.2.1
-
-# Dashboard
-streamlit>=1.30
-
-# Optional: tensorboard logging for SB3
 tensorboard>=2.13

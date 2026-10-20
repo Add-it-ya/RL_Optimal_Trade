@@ -98,11 +98,17 @@ class ActionType(str, Enum):
 class MarketConfig:
     """Parameters of the synthetic market / limit-order-book simulator.
 
-    The price process is an arithmetic mid-price with optional drift, stochastic
-    volatility scaling and Ornstein-Uhlenbeck mean reversion (for sideways regimes).
-    The order book is regenerated each step around the current mid with a depth
-    profile that grows away from the touch and an imbalance driven by a latent AR(1)
-    factor that is (weakly) predictive of the next price move.
+    The mid-price follows an explicit Brownian process (``price_process``: arithmetic,
+    geometric or Ornstein-Uhlenbeck) whose whole path is drawn before the agent acts.
+    The order book is re-quoted each step around the current mid with a depth profile
+    that grows away from the touch and an imbalance driven by a latent AR(1) factor that
+    is (weakly) predictive of the next price move.
+
+    The defaults are calibrated (see :mod:`rl_execution.experiments.calibration` and
+    ``scripts/calibrate.py``) so that impact and price risk genuinely trade off for the
+    default order of 10,000 shares over 20 steps of ~20 minutes: dumping the order at
+    arrival costs ~150 bps, TWAP ~20 bps with ~100 bps of price risk, and the order-book
+    imbalance predicts the next return with a realistic information coefficient (~0.075).
     """
 
     # --- price level / discretisation ---
@@ -118,28 +124,26 @@ class MarketConfig:
     depth_vol: float = 0.25  # relative log-noise applied to resting size
 
     # --- price dynamics (per unit time; one step spans ``dt``) ---
-    volatility: float = 0.02  # std of the mid return per unit time (fraction of price)
+    volatility: float = 0.004  # std of the mid return per unit time (fraction of price)
     drift: float = 0.0  # expected return per unit time (regime: +bull / -bear)
     mean_reversion: float = 0.0  # OU pull toward initial price (sideways regime)
     vol_of_vol: float = 0.0  # stochastic-volatility log-noise on sigma
 
     # --- Brownian-motion layer (see rl_execution.envs.processes) ---
-    price_process: str = "legacy"  # legacy | abm | gbm | ou
+    price_process: str = "abm"  # abm | gbm | ou
     dt: float = 1.0  # time spanned by one decision step, in volatility units
-    rng_mode: str = "legacy"  # legacy (one shared stream) | streams (independent substreams)
     normal_method: str = "ziggurat"  # ziggurat | inverse_cdf (monotone; needed for QMC)
-    vol_process: str = "iid_lognormal"  # none | iid_lognormal | expou (clustering)
+    vol_process: str = "none"  # none | iid_lognormal | expou (clustering)
     vol_persistence: float = 0.0  # AR(1) persistence of ln(sigma) under 'expou'
     leverage_corr: float = 0.0  # corr(dW_price, dW_vol); < 0 = vol rises as price falls
-    imbalance_ou_scaling: bool = False  # sqrt(1-phi^2) innovations => unit-variance imbalance
-    latency_model: str = "adverse"  # adverse (always costly) | bridge (unbiased Brownian bridge)
+    imbalance_ou_scaling: bool = True  # sqrt(1-phi^2) innovations => unit-variance imbalance
 
     # --- microstructure / impact ---
-    permanent_impact: float = 5.0e-6  # mid shift per share executed (Kyle-lambda style)
-    temporary_impact: float = 1.0e-5  # extra per-share concession beyond walking the book
+    permanent_impact: float = 2.0e-5  # mid shift per share executed (Kyle-lambda style)
+    temporary_impact: float = 1.5e-4  # extra per-share concession beyond walking the book
     imbalance_persistence: float = 0.85  # AR(1) coefficient of the latent imbalance factor
-    imbalance_strength: float = 0.30  # how strongly imbalance skews depth between sides
-    imbalance_alpha: float = 0.0  # how strongly imbalance forecasts the next return
+    imbalance_strength: float = 0.40  # how strongly imbalance skews depth between sides
+    imbalance_alpha: float = 4.5e-4  # next-return forecast power of imbalance (IC ~0.075)
 
     # --- ambient (background) traded volume, used by POV / VWAP baselines ---
     base_market_volume: float = 2000.0  # ~shares traded by the rest of the market per step
@@ -152,7 +156,7 @@ class MarketConfig:
         Without this a YAML typo reaches :meth:`RunConfig.validate` as a *string* --
         ``imbalance_ou_scaling: false# oops`` is truthy, passes every membership check
         and silently switches the stationary imbalance scaling on.  Range and membership
-        checks stay in :meth:`RunConfig._validate_manual`; this is only about types.
+        checks stay in :meth:`RunConfig.validate`; this is only about types.
         """
         for f in fields(self):
             # a string under PEP 563, a real type if some caller evaluates the annotations
@@ -172,18 +176,23 @@ class MarketConfig:
 
 @dataclass
 class RewardConfig:
-    """Weights of the multi-component reward.
+    """The execution objective the agent is rewarded on.
 
-    The per-step reward is the negative *implementation-shortfall contribution* of the
-    fill (which already embeds slippage, spread and temporary impact through the realised
-    price), minus an inventory-risk term and an explicit temporary-impact penalty.  The
-    sum over an episode therefore approximates ``-(implementation_shortfall + risk)``.
+    Every episode is scored on the Almgren-Chriss mean-variance objective, in basis points
+    of the arrival notional::
+
+        J = implementation_shortfall + risk_aversion * sum_t (sigma_t * x_t)^2
+
+    where ``x_t`` is the fraction of the order still held over step ``t`` and ``sigma_t``
+    that step's price volatility in bps.  The per-step rewards sum to exactly
+    ``-J * reward_scale`` (see :class:`~rl_execution.envs.ExecutionEnv`), and the
+    Almgren-Chriss baseline uses the same ``risk_aversion`` (converted by
+    :func:`ac_risk_aversion`), so in a signal-free arithmetic-Brownian market its schedule
+    is the optimum of exactly this objective.
     """
 
-    risk_aversion: float = 0.5  # weight on running inventory variance (Almgren-Chriss lambda)
-    temp_impact_penalty: float = 1.0  # extra penalty on temporary impact cost
-    unexecuted_penalty: float = 10.0  # multiplier on the cost of force-liquidated leftover
-    reward_scale: float = 1.0e4  # scale shortfall (fractions) into basis points
+    risk_aversion: float = 1.4e-3  # lambda per bps^2 of carried variance (AC kappa*T ~2.5)
+    reward_scale: float = 1.0  # reward units per bps of objective
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -199,18 +208,16 @@ class ExecutionConfig:
     """Parameters of the execution *task* (the parent order to be worked)."""
 
     total_inventory: float = 10_000.0  # shares of the parent order
-    horizon: int = 20  # number of decision steps (e.g. trading windows)
+    horizon: int = 20  # number of decision steps (e.g. trading windows); the last one
+    # always liquidates whatever is left
     side: Side = Side.SELL
     action_type: ActionType = ActionType.CONTINUOUS
-    n_discrete_actions: int = 11  # granularity of the discrete action grid in [0, 1]
 
     # --- frictions ---
     commission_per_share: float = 0.0  # fixed cash cost per share
     commission_bps: float = 1.0  # proportional fee in basis points of notional
     latency_steps: float = 0.0  # fractional step delay between decision and fill
 
-    # --- termination behaviour ---
-    force_liquidation: bool = True  # liquidate any leftover on the final step
     reward: RewardConfig = field(default_factory=RewardConfig)
 
     def __post_init__(self) -> None:
@@ -235,14 +242,26 @@ class ExecutionConfig:
         return cls(**kwargs)
 
 
+def ac_risk_aversion(market: MarketConfig, execution: ExecutionConfig) -> float:
+    """Almgren-Chriss ``lambda`` (per cash^2) equivalent to the reward's ``risk_aversion``.
+
+    The reward penalises variance in bps of arrival notional ``N = S0 * X``; Almgren-Chriss
+    penalises it in cash.  Since ``cost_bps = cost_cash * 1e4 / N``, the objectives
+    ``E[c_bps] + lambda_bps Var[c_bps]`` and ``E[c] + lambda_AC Var[c]`` share a minimiser
+    exactly when ``lambda_AC = lambda_bps * 1e4 / N``.
+    """
+    notional = float(market.initial_price) * float(execution.total_inventory)
+    return float(execution.reward.risk_aversion) * 1e4 / notional
+
+
 @dataclass
 class RunConfig:
     """Everything needed to reproduce a single training run from one serialised object.
 
     A run is fully described by ``{agent, hyperparameters, training schedule, seed,
-    market, task, tracker}``.  Round-trips to YAML (see
-    :mod:`rl_execution.utils.config_io`) so ``rlx-train --config run.yaml --seed 3`` is
-    sufficient to reproduce, and validates parameter ranges via :meth:`validate`.
+    market, task}``.  Round-trips to YAML (see :mod:`rl_execution.utils.config_io`) so
+    ``rlx train --config run.yaml --seeds 3`` is sufficient to reproduce, and validates
+    parameter ranges via :meth:`validate`.
     """
 
     # --- what to train ---
@@ -264,10 +283,8 @@ class RunConfig:
     market: MarketConfig = field(default_factory=MarketConfig)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
 
-    # --- experiment tracking ---
-    tracker: str = "auto"  # auto | mlflow | wandb | null
-    experiment: str = "rl-execution"  # experiment / W&B project name
-    tag: Optional[str] = None  # model tag / run name (defaults to the agent name)
+    # --- bookkeeping ---
+    experiment: str = "default"  # groups runs under runs/<experiment>/
 
     def __post_init__(self) -> None:
         # allow nested configs to arrive as plain dicts (e.g. from YAML / JSON)
@@ -275,11 +292,6 @@ class RunConfig:
             self.market = MarketConfig.from_dict(self.market)
         if isinstance(self.execution, dict):
             self.execution = ExecutionConfig.from_dict(self.execution)
-
-    @property
-    def run_tag(self) -> str:
-        """Resolved model tag / run name (falls back to the agent name)."""
-        return self.tag or self.agent
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -294,9 +306,7 @@ class RunConfig:
             "eval_base_seed": self.eval_base_seed,
             "market": self.market.to_dict(),
             "execution": self.execution.to_dict(),
-            "tracker": self.tracker,
             "experiment": self.experiment,
-            "tag": self.tag,
         }
 
     @classmethod
@@ -310,28 +320,13 @@ class RunConfig:
         return cls(**kwargs)
 
     def validate(self) -> "RunConfig":
-        """Validate parameter ranges; returns ``self`` so it chains. Raises ``ValueError``.
-
-        Uses :mod:`pydantic` when available (the ``tracking`` extra) for rich, typed
-        messages, and falls back to equivalent manual checks so the core package validates
-        without that optional dependency.
-        """
-        try:
-            from rl_execution.utils.validation import validate_run_config
-
-            validate_run_config(self.to_dict())
-        except ImportError:
-            self._validate_manual()
-        return self
-
-    def _validate_manual(self) -> None:
+        """Validate parameter ranges; returns ``self`` so it chains. Raises ``ValueError``."""
         m, e = self.market, self.execution
         checks = {
+            "agent in {ppo, dqn, doubledqn}": self.agent.lower() in {"ppo", "dqn", "doubledqn"},
             "timesteps > 0": self.timesteps > 0,
             "seed >= 0": self.seed >= 0,
             "eval_episodes > 0": self.eval_episodes > 0,
-            "tracker in {auto, mlflow, wandb, null}": self.tracker
-            in {"auto", "mlflow", "wandb", "null"},
             "0 <= imbalance_alpha <= 1": 0.0 <= m.imbalance_alpha <= 1.0,
             "0 <= imbalance_persistence < 1": 0.0 <= m.imbalance_persistence < 1.0,
             "volatility >= 0": m.volatility >= 0.0,
@@ -339,18 +334,16 @@ class RunConfig:
             "horizon > 0": e.horizon > 0,
             "total_inventory > 0": e.total_inventory > 0.0,
             # --- Brownian layer ---
-            "price_process in {legacy, abm, gbm, ou}": m.price_process
-            in {"legacy", "abm", "gbm", "ou"},
+            "price_process in {abm, gbm, ou}": m.price_process in {"abm", "gbm", "ou"},
             "dt > 0": m.dt > 0.0,
-            "rng_mode in {legacy, streams}": m.rng_mode in {"legacy", "streams"},
             "normal_method in {ziggurat, inverse_cdf}": m.normal_method
             in {"ziggurat", "inverse_cdf"},
             "vol_process in {none, iid_lognormal, expou}": m.vol_process
             in {"none", "iid_lognormal", "expou"},
             "0 <= vol_persistence < 1": 0.0 <= m.vol_persistence < 1.0,
             "-1 <= leverage_corr <= 1": -1.0 <= m.leverage_corr <= 1.0,
-            "latency_model in {adverse, bridge}": m.latency_model in {"adverse", "bridge"},
         }
         failed = [name for name, ok in checks.items() if not ok]
         if failed:
             raise ValueError("Invalid RunConfig: " + "; ".join(failed))
+        return self

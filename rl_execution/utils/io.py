@@ -1,44 +1,23 @@
-"""Filesystem paths and (de)serialisation helpers."""
+"""Filesystem paths and JSON helpers."""
 
 from __future__ import annotations
 
 import json
 import os
-import pickle
 from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-MODELS_DIR = PROJECT_ROOT / "models"
+#: Training runs: ``runs/<experiment>/<agent>/seed_<k>/`` (see :mod:`rl_execution.training`).
+RUNS_DIR = PROJECT_ROOT / "runs"
+#: Evaluation outputs and reports: ``results/<experiment>/``.
 RESULTS_DIR = PROJECT_ROOT / "results"
-REPORTS_DIR = PROJECT_ROOT / "reports"
-FIGURES_DIR = REPORTS_DIR / "figures"
 
 
 def ensure_dir(path: os.PathLike | str) -> Path:
     p = Path(path)
     p.mkdir(parents=True, exist_ok=True)
     return p
-
-
-def resolve_artifact_dirs(
-    out_dir: os.PathLike | str | None = None,
-    models_dir: os.PathLike | str | None = None,
-    *,
-    quick: bool = False,
-) -> tuple[Path, Path]:
-    """Resolve the ``(results, models)`` directories a CLI run should write to.
-
-    An explicit path always wins.  A ``--quick`` smoke run otherwise lands in the sandboxed
-    ``results/quick`` and ``models/quick`` so that tiny-budget numbers can never overwrite
-    the published artefacts.
-    """
-    results_default = RESULTS_DIR / "quick" if quick else RESULTS_DIR
-    models_default = MODELS_DIR / "quick" if quick else MODELS_DIR
-    return (
-        Path(out_dir) if out_dir is not None else results_default,
-        Path(models_dir) if models_dir is not None else models_default,
-    )
 
 
 def _default(o: Any):
@@ -64,14 +43,3 @@ def save_json(obj: Any, path: os.PathLike | str) -> None:
 def load_json(path: os.PathLike | str) -> Any:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
-
-
-def save_pickle(obj: Any, path: os.PathLike | str) -> None:
-    ensure_dir(Path(path).parent)
-    with open(path, "wb") as f:
-        pickle.dump(obj, f)
-
-
-def load_pickle(path: os.PathLike | str) -> Any:
-    with open(path, "rb") as f:
-        return pickle.load(f)

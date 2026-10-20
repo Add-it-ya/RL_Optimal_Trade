@@ -1,10 +1,8 @@
-"""Market-regime presets and experiment runners."""
+"""Market-regime presets and the cross-regime experiment runner."""
 
-# Statistical-rigor harnesses (Step 2). Imported after runner/regimes so their internal
-# `from rl_execution.experiments.runner import ...` resolves against the loaded submodules.
-from rl_execution.experiments.hpo import make_study, optimize, run_study, search_space
-from rl_execution.experiments.multiseed import MultiSeedResult, run_multiseed
 from rl_execution.experiments.regimes import (
+    BROWNIAN_REGIMES,
+    CLASSIC_REGIMES,
     REGIME_GROUPS,
     REGIMES,
     get_regime,
@@ -21,6 +19,8 @@ from rl_execution.experiments.runner import (
 __all__ = [
     "REGIMES",
     "REGIME_GROUPS",
+    "CLASSIC_REGIMES",
+    "BROWNIAN_REGIMES",
     "get_regime",
     "randomized_market_config",
     "list_regimes",
@@ -28,10 +28,4 @@ __all__ = [
     "evaluate_across_regimes",
     "regime_results_frame",
     "DomainRandomizedEnv",
-    "run_multiseed",
-    "MultiSeedResult",
-    "make_study",
-    "run_study",
-    "search_space",
-    "optimize",
 ]

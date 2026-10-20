@@ -1,71 +1,77 @@
 # RL for Optimal Trade Execution
 
-A production-quality, modular **Reinforcement Learning framework for optimal trade
-execution**. It trains agents to work a large parent order over a fixed horizon so as to
-minimise execution cost, market impact, slippage and inventory risk — and benchmarks them
-against the classical execution strategies used on real trading desks.
+A compact **reinforcement-learning framework for optimal trade execution**. An agent works a
+large parent order over a fixed horizon, choosing at each step how much of the remaining
+inventory to sell (or buy) into a simulated limit order book, so as to minimise implementation
+shortfall, market impact and inventory risk. It is benchmarked against the classical
+strategies used on trading desks, including the closed-form **Almgren-Chriss** optimum.
 
-> **Goal.** Learn a policy that decides *how much of the remaining inventory to execute at
-> each step* and consistently beats TWAP, VWAP and Random execution on implementation
-> shortfall and execution cost, while staying robust across market regimes.
+> **Status (v0.2).** The codebase was cut down to a lean core: Brownian-only market dynamics,
+> two agents, three commands. The v0.1 headline results were withdrawn after an audit showed
+> the reward favoured a do-nothing, dump-at-the-end policy and the published weights could no
+> longer be reproduced. New results will be published from the recalibrated simulator, with
+> confidence intervals across training seeds. See [ROADMAP.md](ROADMAP.md) for the plan.
 
 ---
 
-## ✨ Features
+## ✨ What's inside
 
 | Area | What's included |
 |------|-----------------|
-| **Environment** | Custom **Gymnasium** env over a simulated **limit order book** (depth ladder, spread & imbalance dynamics, convex book-walk slippage). State = inventory, time, mid-return, spread, volatility, imbalance, depth, previous action. |
-| **Price dynamics** | Explicit **Brownian-motion** processes with exact discretisations — **arithmetic** BM (the Almgren-Chriss world), **geometric** BM, **Ornstein-Uhlenbeck**, plus **exp-OU stochastic volatility** with clustering and a **leverage** correlation. Named RNG substreams, **Brownian-bridge** latency fills and **antithetic** variates. |
-| **Actions** | **Discrete** grid *and* **continuous** Box — fraction of remaining inventory to trade. |
-| **Reward** | Negative implementation-shortfall contribution (slippage + spread + **temporary impact**), **permanent impact**, transaction costs, **inventory-risk** penalty, unexecuted-inventory penalty. |
-| **Baselines** | **TWAP, VWAP, POV, Random, Almgren-Chriss** (closed-form risk-averse optimal). |
-| **RL agents** | **DQN** & **Double DQN** (from scratch, PyTorch) + **PPO, A2C, SAC** (Stable-Baselines3). |
-| **Metrics** | Implementation shortfall, execution cost, market-impact cost, Sharpe, average fill price, inventory trajectory. |
-| **Experiments** | Volatility (low/med/high), liquidity (thin/normal/deep), trend (bull/bear/sideways) + **domain-randomised** training. |
-| **Advanced** | **Real LOB data** replay (LOBSTER/CSV), **multi-agent** simulation, latency, transaction costs, risk-adjusted rewards. |
-| **Deliverables** | Backtesting engine, trained models, auto-generated **research report**, **Streamlit dashboard**, test suite. |
+| **Environment** | A **Gymnasium** env over a simulated **limit order book**: depth ladder, spread and imbalance dynamics, convex book-walk slippage, temporary + permanent impact, commissions, optional latency. |
+| **Price dynamics** | Explicit **Brownian-motion** processes with exact discretisations: **arithmetic** BM (the Almgren-Chriss world), **geometric** BM, **Ornstein-Uhlenbeck**, plus **exp-OU stochastic volatility** with clustering and a **leverage** correlation. Named RNG substreams, **Brownian-bridge** latency fills and **antithetic** variates. |
+| **Calibration** | Impact and price risk genuinely trade off: dumping the order at arrival costs ~158 bps, TWAP ~19 bps with ~104 bps of price risk, and the order-book signal has a realistic information coefficient (~0.075). Pinned by tests; `scripts/calibrate.py` reports it. |
+| **Objective** | The Almgren-Chriss mean-variance objective, `J = IS + λ·Σ(σ_t x_t)²` in bps. Mark-to-market rewards sum to exactly `−J`, and the Almgren-Chriss baseline shares the same λ, so with no signal its schedule is the optimum. |
+| **Actions** | Relative to TWAP: `a ∈ [−1, 1]`, where −1 waits, 0 trades at the TWAP pace and +1 liquidates now, so an untrained policy starts as TWAP. Discrete agents choose from a grid of TWAP multipliers. |
+| **Baselines** | **TWAP**, **VWAP**, **Almgren-Chriss** (closed-form optimum), plus the nulls an agent must beat: **DumpAtStart**, **WaitThenDump** and **SignalRule** (AC pace tilted by the book signal, one coefficient fitted on validation seeds). |
+| **RL agents** | **PPO** (Stable-Baselines3) and **DQN / Double DQN** written from scratch in PyTorch. |
+| **Evaluation** | Every strategy runs on the same pre-drawn market paths (**common random numbers**), so comparisons are paired. Bootstrap CIs with the **training seed as the unit of analysis**, and **Holm** correction across all comparisons. |
+| **Reproducibility** | Each run folder records its config, git SHA, library versions and the **SHA-256 of its weights**; loading refuses weights that don't match. |
 
 ---
 
 ## Quickstart
 
 ```bash
-# 1. install
-pip install -r requirements.txt          # or: pip install -e ".[rl,dashboard,dev]"
-
-# 2. fast end-to-end smoke run (trains tiny agents, evaluates, makes figures)
-#    --quick is sandboxed: it writes to results/quick/ and models/quick/, never over the
-#    published artefacts. Use --out-dir / --models-dir to choose your own destination.
-python scripts/run_experiments.py --quick
-
-# 3. full run (trains all 5 agents with domain randomisation, evaluates across regimes)
-python scripts/run_experiments.py --timesteps 120000 --episodes 200
-
-# 4. build the research report and launch the dashboard
-python scripts/make_report.py
-streamlit run dashboard/app.py
+pip install -e ".[rl,dev]"
 ```
 
-Train / evaluate a single agent:
+Train, evaluate on held-out test seeds, and write a report:
 
 ```bash
-python scripts/train.py --agent ppo --timesteps 100000 --randomized
-python scripts/evaluate.py --regime bear --episodes 200
+rlx train --agent ppo --timesteps 200000 --seeds 0-4 --regime abm_ac_optimal --experiment e1
 ```
+```bash
+rlx evaluate --experiment e1 --episodes 2000 --antithetic
+```
+```bash
+rlx report --experiment e1
+```
+
+- `rlx train` writes one folder per seed to `runs/<experiment>/<Agent>/seed_<k>/`. Seeds that
+  are already complete are skipped, so an interrupted job can simply be re-launched.
+- `rlx evaluate` scores every run of the experiment plus the baselines on a block of test
+  seeds that training never sees, and writes `results/<experiment>/` (per-episode CSV, summary,
+  figures).
+- `rlx report` turns that into `results/<experiment>/REPORT.md`: IS level and spread per
+  strategy, the paired gap to TWAP with a 95% CI, and Holm-adjusted p-values.
+
+`rlx train --config run.yaml` accepts a full `RunConfig` in YAML (see `config/default.yaml` for
+the market and execution sections); explicit flags override it.
 
 Use the library directly:
 
 ```python
-from rl_execution.config import ExecutionConfig, MarketConfig
+from rl_execution.config import ExecutionConfig
 from rl_execution.envs import ExecutionEnv
 from rl_execution.baselines import TWAP, AlmgrenChriss
-from rl_execution.backtest import compare_strategies, results_table
+from rl_execution.backtest import compare_strategies, paired_is_table
+from rl_execution.experiments import get_regime
 
-factory = lambda: ExecutionEnv(MarketConfig(drift=-0.0008), ExecutionConfig(side="sell"))
-results = compare_strategies(factory, {"TWAP": TWAP(), "AC": AlmgrenChriss(1e-7)},
-                             n_episodes=200, progress=False)
-print(results_table(results))
+factory = lambda: ExecutionEnv(get_regime("abm_ac_optimal"), ExecutionConfig(side="sell"))
+results = compare_strategies(factory, {"TWAP": TWAP(), "AC": AlmgrenChriss()},
+                             n_episodes=400, progress=False, antithetic=True)
+print(paired_is_table(results, benchmark="TWAP", block=2))
 ```
 
 ---
@@ -74,51 +80,32 @@ print(results_table(results))
 
 ```
 rl_execution/
-├── config.py             # MarketConfig / ExecutionConfig / RewardConfig
+├── config.py             # MarketConfig / ExecutionConfig / RewardConfig / RunConfig
 ├── envs/
 │   ├── brownian.py       # RNG substreams, Wiener increments, Brownian bridge, antithetics
 │   ├── processes.py      # ABM / GBM / OU price processes + exp-OU stochastic volatility
-│   ├── lob.py            # order-book snapshot + market-order book-walking
-│   ├── market.py         # stochastic market simulator + impact model
-│   ├── execution_env.py  # the Gymnasium environment
-│   └── multi_agent.py    # multi-agent (shared-impact) simulation
-├── baselines/            # TWAP, VWAP, POV, Random, Almgren-Chriss
-├── agents/               # DQN & DoubleDQN (PyTorch) + SB3 PPO/A2C/SAC wrappers
-├── metrics/              # execution-quality metrics
-├── backtest/             # uniform backtesting engine
-├── experiments/          # regime presets + cross-regime runners + domain randomisation
-├── data/                 # real/historical LOB loaders + replay simulator
-├── viz/                  # plotting (inventory decay, schedules, costs, heatmaps, …)
-├── utils/                # paths, IO, YAML config
-└── training.py           # train / save / load helpers
-scripts/    train.py · evaluate.py · run_experiments.py · make_report.py · brownian_demo.py
-dashboard/  app.py        # Streamlit performance dashboard
+│   ├── lob.py            # order-book snapshot + market-order book walking
+│   ├── market.py         # market simulator: pre-drawn exogenous paths + impact overlay
+│   └── execution_env.py  # the Gymnasium environment
+├── baselines/            # TWAP, VWAP, Almgren-Chriss
+├── agents/               # PPO (SB3 wrapper) and DQN / Double DQN (PyTorch)
+├── backtest/             # uniform backtesting engine, paired comparisons
+├── metrics/              # execution-quality metrics, bootstrap CIs, multiple testing
+├── experiments/          # regime presets, domain randomisation, cross-regime runner
+├── viz/                  # plotting
+├── training.py           # training + run folders (config, weights, provenance)
+└── cli.py                # rlx train | evaluate | report
+scripts/    brownian_demo.py
 config/     default.yaml
 tests/      pytest suite
 ```
 
 ---
 
-## 🧠 How the agent can beat the baselines
-
-The simulator embeds a small, persistent **order-book-imbalance alpha**: imbalance weakly
-predicts the next mid move. Static schedules (TWAP/VWAP/POV) ignore the state entirely, and
-Random just front-loads on average. A **state-reactive RL policy** learns to (a) trade more
-when the book signals favourable moves and hold back otherwise, (b) trade off market impact
-against price/inventory risk (à la Almgren-Chriss), and (c) adapt to drift and liquidity.
-Drift magnitudes are deliberately kept small relative to per-step volatility so that
-*timing skill*, not trivial front-loading, is what differentiates strategies.
-
-Implementation shortfall and execution cost are reported in **basis points of arrival
-notional**, signed so **lower = better** for both buy and sell orders.
-
----
-
 ## 🌊 Brownian price dynamics
 
-`MarketConfig.price_process` selects how the mid-price moves. `legacy` (the default) is the
-original inline multiplicative walk and is kept bit-for-bit reproducible; the other options
-are explicit SDEs with **exact** discretisations:
+`MarketConfig.price_process` selects how the mid-price moves. Each option is an explicit SDE
+with an **exact** discretisation:
 
 | Process | SDE | Exact step |
 |---|---|---|
@@ -128,20 +115,18 @@ are explicit SDEs with **exact** discretisations:
 
 Layered on top: `vol_process="expou"` gives an exponential-OU log-volatility with genuine
 **clustering** (so the env's `volatility` feature carries forecast value), `leverage_corr < 0`
-makes volatility rise after the price falls, and `latency_model="bridge"` prices a delayed
-fill on the **Brownian bridge** between the two decision steps instead of charging an
-always-adverse folded normal.
+makes volatility rise after the price falls, and `latency_steps > 0` prices a delayed fill on
+the **Brownian bridge** between the two decision steps.
 
 Two properties matter beyond realism:
 
-* **Common random numbers actually hold.** The whole exogenous market — price, volatility,
-  imbalance, spread, volume, per-level depth — is drawn at `reset()`, and market impact is
-  an additive overlay. Under `legacy`, trading re-quotes the book and consumes the random
-  draws that would have driven the price, so two strategies on one seed drift onto different
-  paths; under a Brownian process they face bit-identical markets, which is what makes
-  `paired_is_table` a real variance reduction.
-* **Ground truth for the learner.** Under `abm` with no alpha and linear impact the
-  closed-form **Almgren-Chriss** schedule is provably optimal, so the `abm_ac_optimal` regime
+* **Common random numbers hold.** The whole exogenous market (price, volatility, imbalance,
+  spread, volume, per-level depth) is drawn at `reset()`, and market impact is an additive
+  overlay. Nothing an agent does can consume randomness that would move the market, so two
+  strategies on one seed face bit-identical markets and paired differences cancel the shared
+  price risk.
+* **Ground truth for the learner.** Under `abm` with no alpha and linear impact, the
+  closed-form **Almgren-Chriss** schedule is provably optimal. The `abm_ac_optimal` regime
   turns "did the agent solve the problem?" into a measurable schedule distance
   (`schedule_gap_table`) rather than another cost comparison.
 
@@ -149,89 +134,41 @@ Two properties matter beyond realism:
 python scripts/brownian_demo.py          # paths, QQ-plot, vol clustering, quadratic variation
 ```
 
-```python
-from rl_execution.backtest import compare_strategies, paired_is_table
-from rl_execution.experiments.regimes import get_regime
-
-cfg = get_regime("clustered_vol")                  # gbm + exp-OU volatility clustering
-results = compare_strategies(factory, strategies, n_episodes=200, antithetic=True)
-paired_is_table(results, block=2)                  # block=2: antithetic pairs are dependent
-```
-
 ---
 
-## 📊 Outputs
+## ⚡ Training on a GPU machine
 
-Running the pipeline writes:
-
-- `results/regime_results.csv` — tidy metrics for every (strategy × regime).
-- `results/results.pkl`, `results/summary.json`, `results/reward_logs.json`.
-- `models/<agent>.{pt,zip}` + `<agent>.json` sidecars (trained models).
-- `reports/figures/*.png` and `reports/REPORT.md` — the research report.
-
----
-
-## 🔬 Using real LOB data
-
-```python
-from rl_execution.data import load_lobster, HistoricalMarketSource
-from rl_execution.envs import ExecutionEnv
-from rl_execution.config import MarketConfig, ExecutionConfig
-
-df = load_lobster("AAPL_orderbook.csv", levels=5)          # or load_lob_csv(...)
-src = HistoricalMarketSource(df, MarketConfig())
-env = ExecutionEnv(MarketConfig(), ExecutionConfig(), market_source=src)
-```
-
-The replay simulator overlays the configured market-impact model on top of the recorded
-prices, so the same agents and baselines run unchanged on historical data.
-
----
-
-## ⚡ GPU / CUDA
-
-All agents accept a `device` argument (`"cpu"` default, `"cuda"`, or `"auto"`), exposed on
-the scripts via `--device`:
+The policies are small MLPs and the environment step runs on the CPU, so for this code a
+machine's **CPU cores** matter more than its GPU: run several seeds in parallel, one process
+each, with `OMP_NUM_THREADS=1` so they don't fight over threads. A CUDA build of PyTorch is
+only needed for GPU work:
 
 ```bash
-python scripts/train.py --agent sac --timesteps 100000 --device cuda
-python scripts/run_experiments.py --device cuda
+nvidia-smi
 ```
-
-**Recommendation: keep `--device cpu`.** The policies here are tiny 64×64 MLPs and the
-throughput bottleneck is the environment step (CPU), not matrix multiplies. Moving tiny
-tensors to the GPU every step usually makes training *slower* due to transfer latency —
-this is the standard guidance for MLP-based RL (Stable-Baselines3 warns about it too). A
-GPU helps when networks are large or observations are images, neither of which applies here.
-
-The bundled `requirements.txt` / the wheel installed in this repo is **CPU-only PyTorch**.
-To actually use CUDA you must install a matching CUDA build first, e.g.:
-
 ```bash
-pip uninstall -y torch
-pip install torch --index-url https://download.pytorch.org/whl/cu124   # match your CUDA
-python -c "import torch; print(torch.cuda.is_available())"             # expect: True
+pip install torch --index-url https://download.pytorch.org/whl/cu121
 ```
+```bash
+python -c "import torch; print(torch.cuda.is_available())"
+```
+
+Pick the `cuXXX` wheel that matches the CUDA version `nvidia-smi` reports.
 
 ## 🛠 Troubleshooting
 
-- **`OMP: Error #15: ... libiomp5md.dll already initialized`** (common on Windows +
-  Anaconda + PyTorch). The package sets `KMP_DUPLICATE_LIB_OK=TRUE` in
-  `rl_execution/__init__.py` before torch is imported, which resolves it. If you import
-  torch *before* `rl_execution`, set that env var yourself first.
-- **`torch.cuda.is_available()` is False** — expected; the bundled wheel is CPU-only (see
-  the GPU section above to install a CUDA build).
-- **RL results look poor / agents "do nothing then dump"** — undertrained. Use ≥60k steps
-  for the value-based agents (`--timesteps 80000`).
+- **`OMP: Error #15: ... libiomp5md.dll already initialized`** (Windows + Anaconda + PyTorch).
+  The package sets `KMP_DUPLICATE_LIB_OK=TRUE` on Windows before torch is imported. If you
+  import torch *before* `rl_execution`, set that environment variable yourself.
 
-## ⚠️ Interpreting the numbers (important)
+## ⚠️ Interpreting the numbers
 
-The simulator embeds an **intentionally amplified** order-book-imbalance alpha so the RL
-learning signal is unambiguous. The absolute basis-point improvements (e.g. RL beating
-TWAP by hundreds of bps) are therefore **optimistic and not realistic P&L** — real signals
-are far weaker. The meaningful result is the **relative ordering and robustness** of
-strategies, and the methodology (paired evaluation, regime sweeps). See
-`reports/REPORT.md` §6 for the full findings, discussion and limitations.
+The default market's order-book signal is calibrated to a realistic strength (observed
+information coefficient ~0.075, per-step R² under 1%). Any edge a learned policy shows is
+only as meaningful as that calibration: report improvements together with the signal
+strength that produced them, compare against `SignalRule` (the two-line way to use the same
+signal), and use `abm_ac_optimal` (no signal) to check that a learner recovers the known
+optimum. The simulator is a research tool, not a P&L forecast.
 
 ## ✅ Testing
 
@@ -241,9 +178,8 @@ python -m pytest -q
 
 ## 📦 Requirements
 
-Python ≥ 3.9; core stack (numpy/pandas/scipy/gymnasium/matplotlib/seaborn) plus
-`torch` and `stable-baselines3` for the RL agents and `streamlit` for the dashboard.
-See `requirements.txt`.
+Python ≥ 3.10; numpy / pandas / scipy / gymnasium / matplotlib / seaborn, plus `torch` and
+`stable-baselines3` for the agents (the `rl` extra). See `requirements.txt`.
 
 ## License
 

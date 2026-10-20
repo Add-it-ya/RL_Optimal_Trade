@@ -75,10 +75,8 @@ def test_numpy_scalars_become_python_floats():
     "field, value, expected",
     [
         ("price_process", " GBM ", "gbm"),
-        ("rng_mode", "Streams", "streams"),
         ("normal_method", "INVERSE_CDF", "inverse_cdf"),
         ("vol_process", " expou", "expou"),
-        ("latency_model", "Bridge ", "bridge"),
     ],
 )
 def test_enum_fields_are_case_and_whitespace_tolerant(field, value, expected):
@@ -93,10 +91,13 @@ def test_enum_fields_reject_non_strings():
 
 
 # =============================================================== nothing else moved
-def test_default_yaml_still_loads():
+def test_default_yaml_matches_the_code_defaults():
+    """config/default.yaml documents the calibrated defaults; it must not drift from them."""
+    from rl_execution.config import ExecutionConfig
+
     market, execution = load_config("config/default.yaml")
-    assert market.price_process == "legacy"
-    assert market.imbalance_ou_scaling is False
+    assert market == MarketConfig()
+    assert execution.to_dict() == ExecutionConfig().to_dict()
     RunConfig(market=market, execution=execution).validate()
 
 

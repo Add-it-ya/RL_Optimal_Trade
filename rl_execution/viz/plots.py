@@ -1,14 +1,14 @@
 """Matplotlib/seaborn plotting helpers.
 
-Every function returns a ``matplotlib.figure.Figure`` (and optionally saves it), so the
-same code serves both the offline report and the Streamlit dashboard.  A non-interactive
-Agg backend is used so plots render in headless / script contexts.
+Every function returns a ``matplotlib.figure.Figure`` (and optionally saves it).  A
+non-interactive Agg backend is used so plots render in headless / script contexts (lab
+machines, CI).
 """
 
 from __future__ import annotations
 
 import os
-from typing import Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional
 
 import matplotlib
 
@@ -39,7 +39,7 @@ def save_fig(fig, path: str) -> str:
 
 
 # --------------------------------------------------------------------------- curves
-def plot_inventory_decay(results: Dict[str, "object"], save: Optional[str] = None):
+def plot_inventory_decay(results: Mapping[str, Any], save: Optional[str] = None):
     """Mean remaining-inventory trajectory (inventory decay curve) per strategy."""
     set_style()
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -58,7 +58,7 @@ def plot_inventory_decay(results: Dict[str, "object"], save: Optional[str] = Non
     return fig
 
 
-def plot_execution_schedule(results: Dict[str, "object"], save: Optional[str] = None):
+def plot_execution_schedule(results: Mapping[str, Any], save: Optional[str] = None):
     """Mean shares executed per step (execution schedule) per strategy."""
     set_style()
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -73,24 +73,6 @@ def plot_execution_schedule(results: Dict[str, "object"], save: Optional[str] = 
     ax.set_xlabel("Step")
     ax.set_ylabel("Shares executed (mean)")
     ax.set_title("Execution schedules")
-    ax.legend(fontsize=8)
-    if save:
-        save_fig(fig, save)
-    return fig
-
-
-def plot_reward_curve(results: Dict[str, "object"], save: Optional[str] = None):
-    """Mean cumulative reward across the episode per strategy."""
-    set_style()
-    fig, ax = plt.subplots(figsize=(8, 5))
-    for name, res in results.items():
-        curve = res.mean_reward_curve()
-        if curve.size == 0:
-            continue
-        ax.plot(np.cumsum(curve), label=name)
-    ax.set_xlabel("Step")
-    ax.set_ylabel("Cumulative reward (bps-scaled)")
-    ax.set_title("Cumulative reward over the execution horizon")
     ax.legend(fontsize=8)
     if save:
         save_fig(fig, save)
@@ -127,60 +109,32 @@ def plot_training_curve(
 
 
 # --------------------------------------------------------------------------- comparisons
-def plot_cost_comparison(table: pd.DataFrame, save: Optional[str] = None):
-    """Grouped bar chart of IS / execution cost / market impact per strategy."""
-    set_style()
-    cols = [c for c in ["IS_bps", "ExecCost_bps", "MktImpact_bps"] if c in table.columns]
-    fig, ax = plt.subplots(figsize=(9, 5))
-    table = table.sort_values("IS_bps")
-    x = np.arange(len(table))
-    width = 0.8 / max(len(cols), 1)
-    for i, col in enumerate(cols):
-        ax.bar(x + i * width, table[col].to_numpy(), width=width, label=col)
-    ax.set_xticks(x + width * (len(cols) - 1) / 2)
-    ax.set_xticklabels(table.index, rotation=30, ha="right")
-    ax.set_ylabel("Cost (bps)")
-    ax.set_title("Execution cost comparison (lower is better)")
-    ax.axhline(0, color="k", lw=0.6)
-    ax.legend(fontsize=8)
-    if save:
-        save_fig(fig, save)
-    return fig
+def plot_risk_vs_cost(summary: pd.DataFrame, save: Optional[str] = None):
+    """Mean implementation shortfall against its standard deviation, one point per strategy.
 
-
-def plot_rl_vs_baselines(table: pd.DataFrame, rl_names: Iterable[str], save: Optional[str] = None):
-    """Bar chart of mean IS with RL agents highlighted vs baselines."""
+    Execution is a mean-variance problem: a strategy up and to the right of another is
+    dominated.  ``summary`` needs ``strategy``, ``IS_bps`` and ``IS_std`` columns.
+    """
     set_style()
-    table = table.sort_values("IS_bps")
-    rl = set(rl_names)
-    colors = ["#d1495b" if name in rl else "#5b8c85" for name in table.index]
-    fig, ax = plt.subplots(figsize=(9, 5))
-    ax.bar(table.index, table["IS_bps"].to_numpy(), color=colors)
-    ax.set_ylabel("Implementation shortfall (bps)")
-    ax.set_title("RL agents vs baselines (lower is better)")
-    ax.axhline(0, color="k", lw=0.6)
-    plt.xticks(rotation=30, ha="right")
-    if "IS_std" in table.columns:
-        ax.errorbar(
-            table.index,
-            table["IS_bps"],
-            yerr=table["IS_std"],
-            fmt="none",
-            ecolor="gray",
-            alpha=0.5,
-            capsize=3,
+    fig, ax = plt.subplots(figsize=(7, 5))
+    for _, row in summary.iterrows():
+        ax.scatter(row["IS_std"], row["IS_bps"], s=40)
+        ax.annotate(
+            str(row["strategy"]),
+            (row["IS_std"], row["IS_bps"]),
+            textcoords="offset points",
+            xytext=(5, 4),
+            fontsize=8,
         )
-    handles = [
-        plt.Rectangle((0, 0), 1, 1, color="#d1495b"),
-        plt.Rectangle((0, 0), 1, 1, color="#5b8c85"),
-    ]
-    ax.legend(handles, ["RL agent", "Baseline"], fontsize=8)
+    ax.set_xlabel("IS standard deviation (bps)")
+    ax.set_ylabel("Mean implementation shortfall (bps)")
+    ax.set_title("Cost vs risk (lower-left is better)")
     if save:
         save_fig(fig, save)
     return fig
 
 
-def plot_is_distribution(results: Dict[str, "object"], save: Optional[str] = None):
+def plot_is_distribution(results: Mapping[str, Any], save: Optional[str] = None):
     """Box/violin of per-episode implementation shortfall per strategy."""
     set_style()
     data, labels = [], []
@@ -198,34 +152,6 @@ def plot_is_distribution(results: Dict[str, "object"], save: Optional[str] = Non
     ax.set_ylabel("Implementation shortfall (bps)")
     ax.set_title("Per-episode IS distribution (lower is better)")
     plt.xticks(rotation=30, ha="right")
-    if save:
-        save_fig(fig, save)
-    return fig
-
-
-def plot_price_path(result, episode: int = 0, save: Optional[str] = None):
-    """Mid-price path and fills for a single sample episode."""
-    set_style()
-    fig, ax = plt.subplots(figsize=(8, 5))
-    if result.price_paths and episode < len(result.price_paths):
-        path = result.price_paths[episode]
-        ax.plot(path, label="Mid price", color="#33658a")
-        sched = result.schedules[episode] if episode < len(result.schedules) else None
-        if sched is not None:
-            steps = np.arange(1, len(sched) + 1)
-            sizes = 20 + 180 * sched / (sched.max() + 1e-9)
-            ax.scatter(
-                steps,
-                path[1 : len(sched) + 1],
-                s=sizes,
-                color="#d1495b",
-                alpha=0.7,
-                label="Fills (size ∝ shares)",
-            )
-    ax.set_xlabel("Step")
-    ax.set_ylabel("Price")
-    ax.set_title(f"Sample execution path ({result.name})")
-    ax.legend(fontsize=8)
     if save:
         save_fig(fig, save)
     return fig

@@ -1,9 +1,9 @@
 """Provenance capture so every artifact answers "what produced this?".
 
-A trained model is only trustworthy if you can trace it back to the exact code, config,
-data and seed that created it.  :func:`capture_provenance` gathers that lineage into a
-plain ``dict`` that gets stamped into each model's JSON sidecar (and logged as tracker
-tags), making every artifact self-describing and auditable.
+A trained model is only trustworthy if you can trace it back to the exact code, config
+and seed that created it.  :func:`capture_provenance` gathers that lineage into a plain
+``dict`` that is written to each run folder's ``provenance.json``, together with the
+:func:`file_sha256` of the weights, making every artifact self-describing and auditable.
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ _DEFAULT_LIBS = (
     "gymnasium",
     "torch",
     "stable-baselines3",
-    "mlflow",
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -89,6 +88,15 @@ def config_hash(config: Any) -> str:
     return hashlib.sha256(canonical_json(config).encode("utf-8")).hexdigest()
 
 
+def file_sha256(path: Any) -> str:
+    """SHA-256 of a file's bytes (used to pin model weights to the run that wrote them)."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def lib_versions(packages: Iterable[str] = _DEFAULT_LIBS) -> Dict[str, str]:
     """Installed version of each distribution, or ``"not-installed"`` if absent."""
     out: Dict[str, str] = {}
@@ -104,7 +112,6 @@ def capture_provenance(
     *,
     seed: Optional[int] = None,
     config: Any = None,
-    data_hash: Optional[str] = None,
     extra_libs: Iterable[str] = (),
 ) -> Dict[str, Any]:
     """Assemble the full lineage record for an artifact.
@@ -115,9 +122,6 @@ def capture_provenance(
         The seed the run was launched with.
     config:
         The run configuration; its :func:`config_hash` is recorded (omitted if ``None``).
-    data_hash:
-        Content hash of the dataset.  ``None`` for pure-synthetic runs (a real data hash
-        arrives with the data pipeline in Step 3).
     extra_libs:
         Additional distribution names to version-stamp beyond the defaults.
     """
@@ -125,7 +129,6 @@ def capture_provenance(
         "git_sha": git_sha(),
         "git_dirty": git_is_dirty(),
         "config_hash": config_hash(config) if config is not None else None,
-        "data_hash": data_hash,
         "seed": seed,
         "lib_versions": lib_versions((*_DEFAULT_LIBS, *extra_libs)),
         "python": platform.python_version(),

@@ -6,10 +6,10 @@ from rl_execution.agents import required_action_type
 from rl_execution.config import ExecutionConfig, MarketConfig, RunConfig, Side
 from rl_execution.envs import ExecutionEnv
 from rl_execution.experiments.regimes import get_regime
-from rl_execution.training import save_agent, train_agent
+from rl_execution.training import find_runs, load_run, run_dir, save_run, train_agent
 from rl_execution.utils.config_io import dump_run_config, load_run_config
 from rl_execution.utils.io import load_json
-from rl_execution.utils.provenance import capture_provenance, config_hash, git_sha
+from rl_execution.utils.provenance import capture_provenance, config_hash, file_sha256, git_sha
 
 # Tiny DQN budget that still exercises gradient updates (timesteps > learning_starts).
 _FAST = dict(learning_starts=20, batch_size=8, buffer_size=500, target_update_interval=50)
@@ -75,7 +75,6 @@ def test_capture_provenance_has_lineage_fields():
         "git_sha",
         "git_dirty",
         "config_hash",
-        "data_hash",
         "seed",
         "lib_versions",
         "python",
@@ -85,24 +84,57 @@ def test_capture_provenance_has_lineage_fields():
     assert expected <= set(prov)
     assert prov["seed"] == 7
     assert prov["config_hash"] == config_hash(rc)
-    assert prov["data_hash"] is None  # pure-synthetic until the data pipeline (Step 3)
     assert "numpy" in prov["lib_versions"]
 
 
-def test_provenance_sidecar(tmp_path, monkeypatch):
-    """A saved model's JSON sidecar carries git_sha, config_hash, lib_versions and seed."""
-    pytest.importorskip("torch")
-    monkeypatch.setattr("rl_execution.training.MODELS_DIR", tmp_path)
-    rc = RunConfig(agent="dqn", seed=5, regime="normal_liquidity", randomized=False)
-    agent, _ = _train_tiny(5)
-    save_agent(agent, "dqn", tag="dqn", seed=5, config=rc)
+def _saved_run(tmp_path, seed=5):
+    rc = RunConfig(
+        agent="dqn",
+        seed=seed,
+        regime="normal_liquidity",
+        randomized=False,
+        timesteps=200,
+        agent_kwargs=dict(_FAST),
+    )
+    agent, log = _train_tiny(seed)
+    out = save_run(agent, rc, run_dir(tmp_path, rc.experiment, rc.agent, seed), log)
+    return agent, rc, out
 
-    sidecar = load_json(str(tmp_path / "dqn.json"))
-    prov = sidecar["provenance"]
+
+def test_run_folder_records_provenance(tmp_path):
+    """A run folder carries its config, git SHA, config hash, versions and weight hash."""
+    pytest.importorskip("torch")
+    _, rc, out = _saved_run(tmp_path)
+
+    assert out == tmp_path / "default" / "DQN" / "seed_5"
+    assert {"config.yaml", "model.pt", "provenance.json", "train_log.csv"} <= {
+        p.name for p in out.iterdir()
+    }
+    prov = load_json(out / "provenance.json")
     assert prov["seed"] == 5
     assert prov["git_sha"]  # a SHA, or the literal "unknown" outside a checkout
     assert prov["config_hash"] == config_hash(rc)
+    assert prov["weights_sha256"] == file_sha256(out / "model.pt")
     assert "numpy" in prov["lib_versions"]
+    assert find_runs(tmp_path) == [out]
+
+
+def test_load_run_round_trips_the_policy(tmp_path):
+    pytest.importorskip("torch")
+    agent, rc, out = _saved_run(tmp_path)
+    loaded, rc2 = load_run(out)
+    assert rc2.to_dict() == rc.to_dict()
+    assert _first_actions(loaded) == _first_actions(agent)
+
+
+def test_load_run_rejects_swapped_weights(tmp_path):
+    """Weights that do not match provenance.json are refused, not silently loaded."""
+    pytest.importorskip("torch")
+    _, _, out = _saved_run(tmp_path, seed=5)
+    other, _ = _train_tiny(6)
+    other.save(str(out / "model.pt"))  # a different run's weights under this folder
+    with pytest.raises(ValueError, match="do not match"):
+        load_run(out)
 
 
 def test_runconfig_yaml_roundtrip(tmp_path):
@@ -132,7 +164,7 @@ def test_runconfig_validation_accepts_defaults():
         {"market": MarketConfig(imbalance_alpha=2.0)},
         {"execution": ExecutionConfig(horizon=0)},
         {"timesteps": 0},
-        {"tracker": "bogus"},
+        {"agent": "sac"},
     ],
 )
 def test_runconfig_validation_rejects_bad_ranges(kwargs):
