@@ -9,7 +9,8 @@ in one process beats spawning workers.
 Defaults suit the execution task: ``gamma = 1`` (finite horizon, time left is observed), a
 small initial action noise (``log_std_init = -1``, i.e. a standard deviation of ~0.37
 around the TWAP pace instead of SB3's 1.0, which would mostly hit the "wait" and
-"liquidate now" ends of the action range), and a learning rate that decays linearly to 0.
+"liquidate now" ends of the action range), and a learning rate that decays linearly to 0
+(or to ``lr_end_fraction`` of its start).
 """
 
 from __future__ import annotations
@@ -24,13 +25,27 @@ from rl_execution.config import ActionType
 
 
 class LinearSchedule:
-    """``start * progress_remaining`` -- SB3 calls it with progress going from 1 to 0."""
+    """``start * progress_remaining`` -- SB3 calls it with progress going from 1 to 0.
 
-    def __init__(self, start: float) -> None:
+    With ``end_fraction = f`` the rate ends at ``f * start`` instead of 0, i.e.
+    ``start * (f + (1 - f) * progress_remaining)``: over a budget ``T`` that is the
+    schedule of a budget ``T / (1 - f)`` cut at ``T`` (f = 0.6 over 2M steps follows the
+    5M schedule's first 2M steps).
+    """
+
+    #: Class-level default so schedules pickled before ``end_fraction`` existed still load.
+    end_fraction: float = 0.0
+
+    def __init__(self, start: float, end_fraction: float = 0.0) -> None:
+        if not 0.0 <= end_fraction <= 1.0:
+            raise ValueError(f"end_fraction must be in [0, 1], got {end_fraction}")
         self.start = float(start)
+        self.end_fraction = float(end_fraction)
 
     def __call__(self, progress_remaining: float) -> float:
-        return self.start * float(progress_remaining)
+        # f = 0 gives start * (0 + 1 * p) == start * p exactly: the original schedule
+        f = self.end_fraction
+        return self.start * (f + (1.0 - f) * float(progress_remaining))
 
 
 DEFAULT_HP: Dict[str, Any] = dict(
@@ -61,6 +76,7 @@ class PPOAgent(BaseAgent):
         net_arch=(64, 64),
         log_std_init: float = DEFAULT_LOG_STD_INIT,
         learning_rate: Any = DEFAULT_LEARNING_RATE,
+        lr_end_fraction: float = 0.0,
         verbose: int = 0,
         device: str = "cpu",
         **hp,
@@ -74,7 +90,9 @@ class PPOAgent(BaseAgent):
         params = dict(DEFAULT_HP)
         params.update(hp)
         if isinstance(learning_rate, (int, float)):
-            learning_rate = LinearSchedule(learning_rate)
+            learning_rate = LinearSchedule(learning_rate, lr_end_fraction)
+        elif lr_end_fraction:
+            raise ValueError("lr_end_fraction needs a numeric learning_rate, not a schedule")
         self.model = PPO(
             "MlpPolicy",
             env,

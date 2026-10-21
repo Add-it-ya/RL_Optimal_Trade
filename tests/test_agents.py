@@ -102,6 +102,35 @@ def test_ppo_save_load_round_trip(tmp_path):
     assert np.allclose(loaded.predict(obs), agent.predict(obs))
 
 
+def test_lr_end_fraction_cuts_a_longer_linear_schedule():
+    """``end_fraction`` 0.6 over 2M steps is the 5M schedule, 3e-4 * (1 - t / 5M), cut at
+    2M; the default 0 is the original ``start * progress_remaining`` bit for bit."""
+    from rl_execution.agents.ppo import LinearSchedule
+
+    cut, full = LinearSchedule(3e-4, end_fraction=0.6), LinearSchedule(3e-4)
+    for t in range(0, 2_000_000, 256 * 16):  # one lr update per rollout of 16 envs
+        progress = 1.0 - float(t) / float(2_000_000)  # as SB3 computes it
+        assert cut(progress) == pytest.approx(3e-4 * (1.0 - t / 5_000_000), rel=1e-12, abs=0)
+    assert cut(0.0) == pytest.approx(3e-4 * (1.0 - 2_000_000 / 5_000_000), rel=1e-12, abs=0)
+    for p in np.linspace(0.0, 1.0, 101):
+        assert full(p) == 3e-4 * p
+
+    legacy = LinearSchedule.__new__(LinearSchedule)
+    legacy.__dict__["start"] = 3e-4  # as unpickled from a model saved before the option
+    assert legacy(0.5) == 3e-4 * 0.5
+    with pytest.raises(ValueError):
+        LinearSchedule(3e-4, end_fraction=1.5)
+
+
+def test_ppo_lr_end_fraction_reaches_the_optimiser():
+    env = _env("ppo")
+    agent = make_agent("ppo", env, seed=0, lr_end_fraction=0.6, **_FAST["ppo"])
+    agent.train(128)  # the last update runs at progress 0: the floor, not 0
+    assert agent.model.policy.optimizer.param_groups[0]["lr"] == pytest.approx(0.6 * 3e-4)
+    with pytest.raises(ValueError):
+        make_agent("ppo", env, seed=0, learning_rate=lambda p: 1e-4 * p, lr_end_fraction=0.6)
+
+
 def test_agent_names_normalise():
     from rl_execution.agents import normalize_agent_name
 
