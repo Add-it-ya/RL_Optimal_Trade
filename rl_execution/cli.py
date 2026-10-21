@@ -1,10 +1,11 @@
-"""Command-line interface: ``rlx train``, ``rlx evaluate`` and ``rlx report``.
+"""Command-line interface: ``rlx train``, ``rlx evaluate``, ``rlx report`` and ``rlx sweep``.
 
 Examples
 --------
     rlx train --agent ppo --timesteps 200000 --seeds 0-4 --regime abm_ac_optimal --experiment e1
     rlx evaluate --experiment e1 --episodes 2000 --antithetic
     rlx report --experiment e1
+    rlx sweep --experiments e2_ic000 e2_ic025 e2_ic050 e2_ic100 e2_ic200 --out results/e2
 
 ``train``
     Trains one agent per seed into ``runs/<experiment>/<Agent>/seed_<k>/``.  A seed whose
@@ -12,13 +13,17 @@ Examples
 ``evaluate``
     Scores every run of the experiment, plus the baselines, on a block of test seeds that
     training never sees, and writes ``results/<experiment>/`` (per-episode CSV, summary
-    table, figures).
+    table, figures).  ``--jobs N`` evaluates N regimes at a time in separate processes.
 ``report``
     Aggregates ``results/<experiment>/`` into ``REPORT.md``: one row per strategy with the
     mean objective (implementation shortfall + Almgren-Chriss risk penalty), the level,
     spread and tail of implementation shortfall, how many steps it trades in, and the paired
     gap to Almgren-Chriss with a 95% CI (across training seeds for RL agents) and
     Holm-adjusted p-values.
+``sweep``
+    Combines evaluated experiments of the signal sweep (E2, one per signal strength) into
+    ``SWEEP.md``: each strategy's improvement over Almgren-Chriss and over ``SignalRule``
+    against the signal's IC, with CIs and one Holm adjustment over the whole sweep.
 """
 
 from __future__ import annotations
@@ -207,24 +212,101 @@ def schedule_l1(
     return out
 
 
-def cmd_evaluate(args) -> None:
+def _evaluate_regime(task: dict, loaded=None) -> dict:
+    """Score every run plus the baselines in one regime; write its figures.
+
+    Returns plain frames only (episodes, schedules, summary) and the fitted parameters, so a
+    regime's per-episode trajectories are freed as soon as it is done, and so the function
+    can run in a worker process for ``rlx evaluate --jobs``.  A worker loads the runs itself
+    (``loaded`` passes them in when running in-process) and uses one torch thread.
+    """
     from rl_execution import viz
     from rl_execution.backtest import pool_results
+    from rl_execution.experiments import (
+        build_baselines,
+        evaluate_across_regimes,
+        regime_results_frame,
+    )
+
+    if loaded is None:
+        try:
+            import torch
+
+            torch.set_num_threads(1)
+        except ImportError:  # pragma: no cover - torch is a hard dependency of the agents
+            pass
+        loaded = _load_runs(Path(task["runs_root"]))
+    strategies, action_types, _, exec_config, _ = loaded
+    exec_config = replace(exec_config or ExecutionConfig(), action_type=ActionType.CONTINUOUS)
+    regime = task["regime"]
+    results = evaluate_across_regimes(
+        {**build_baselines(), **strategies},
+        exec_config,
+        regimes=[regime],
+        action_types=action_types,
+        n_episodes=task["episodes"],
+        base_seed=task["base_seed"],
+        antithetic=task["antithetic"],
+        progress=False,
+    )
+    by_strat = results[regime]
+    episodes = pd.DataFrame(
+        [
+            {
+                "regime": regime,
+                "strategy": name,
+                "agent": _agent_of(name),
+                "seed": _seed_of(name),
+                "episode": i,
+                **m,
+            }
+            for name, res in by_strat.items()
+            for i, m in enumerate(res.episode_metrics)
+        ]
+    )
+
+    figures = ensure_dir(Path(task["figures"]))
+    pooled = {}
+    for agent in dict.fromkeys(_agent_of(n) for n in by_strat):
+        members = [r for n, r in by_strat.items() if _agent_of(n) == agent]
+        pooled[agent] = members[0] if len(members) == 1 else pool_results(members, agent)
+    summary = pd.DataFrame(
+        [
+            {
+                "strategy": name,
+                "IS_bps": res.aggregate["implementation_shortfall_bps_mean"],
+                "IS_std": res.aggregate["implementation_shortfall_bps_std"],
+            }
+            for name, res in pooled.items()
+        ]
+    )
+    viz.plot_execution_schedule(pooled, save=str(figures / f"{regime}_schedule.png"))
+    viz.plot_inventory_decay(pooled, save=str(figures / f"{regime}_inventory.png"))
+    viz.plot_is_distribution(pooled, save=str(figures / f"{regime}_is_distribution.png"))
+    viz.plot_risk_vs_cost(summary, save=str(figures / f"{regime}_risk_vs_cost.png"))
+    return {
+        "regime": regime,
+        "episodes": episodes,
+        "schedules": schedules_frame(results),
+        "summary": regime_results_frame(results),
+        "params": {name: res.params for name, res in by_strat.items() if res.params},
+    }
+
+
+def cmd_evaluate(args) -> None:
     from rl_execution.experiments import (
         HELD_OUT,
         IN_DISTRIBUTION,
         build_baselines,
-        evaluate_across_regimes,
         list_regimes,
-        regime_results_frame,
         resolve_regimes,
     )
 
     runs_root = Path(args.runs_dir) / args.experiment
-    strategies, action_types, runs_meta, exec_config, trained_on = _load_runs(runs_root)
+    loaded = _load_runs(runs_root)
+    strategies, _, runs_meta, _, trained_on = loaded
     if not strategies:
         print(f"No runs under {runs_root}; evaluating the baselines only.")
-    exec_config = replace(exec_config or ExecutionConfig(), action_type=ActionType.CONTINUOUS)
 
     if args.regimes:
         regimes = resolve_regimes(args.regimes)
@@ -235,41 +317,49 @@ def cmd_evaluate(args) -> None:
     else:
         regimes = list_regimes(include_brownian=args.include_brownian)
 
-    all_strategies = {**build_baselines(), **strategies}
-    print(
-        f"Evaluating {len(all_strategies)} strategies x {len(regimes)} regimes, "
-        f"{args.episodes} episodes each (test seeds from {args.base_seed:,}"
-        f"{', antithetic' if args.antithetic else ''}) ..."
-    )
-    results = evaluate_across_regimes(
-        all_strategies,
-        exec_config,
-        regimes=regimes,
-        action_types=action_types,
-        n_episodes=args.episodes,
-        base_seed=args.base_seed,
-        antithetic=args.antithetic,
-        progress=False,
-    )
-
     out = ensure_dir(Path(args.out) if args.out else RESULTS_DIR / args.experiment)
-    rows = []
-    for regime, by_strat in results.items():
-        for name, res in by_strat.items():
-            for i, m in enumerate(res.episode_metrics):
-                rows.append(
-                    {
-                        "regime": regime,
-                        "strategy": name,
-                        "agent": _agent_of(name),
-                        "seed": _seed_of(name),
-                        "episode": i,
-                        **m,
-                    }
-                )
-    pd.DataFrame(rows).to_csv(out / "episodes.csv", index=False)
-    schedules_frame(results).to_csv(out / "schedules.csv", index=False)
-    regime_results_frame(results).to_csv(out / "summary.csv", index=False)
+    jobs = max(1, min(int(args.jobs), len(regimes)))
+    n_strategies = len(build_baselines()) + len(strategies)
+    print(
+        f"Evaluating {n_strategies} strategies x {len(regimes)} regimes, "
+        f"{args.episodes} episodes each (test seeds from {args.base_seed:,}"
+        f"{', antithetic' if args.antithetic else ''}"
+        f"{f', {jobs} processes' if jobs > 1 else ''}) ..."
+    )
+    tasks = [
+        {
+            "runs_root": str(runs_root),
+            "regime": regime,
+            "episodes": args.episodes,
+            "base_seed": args.base_seed,
+            "antithetic": bool(args.antithetic),
+            "figures": str(out / "figures"),
+        }
+        for regime in regimes
+    ]
+    t0 = time.time()
+    parts: List[dict] = []
+    if jobs == 1:
+        for task in tasks:
+            parts.append(_evaluate_regime(task, loaded))
+            print(f"  {task['regime']} done ({time.time() - t0:.0f}s)")
+    else:
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(max_workers=jobs) as pool:
+            for part in pool.map(_evaluate_regime, tasks):  # results come back in order
+                parts.append(part)
+                print(f"  {part['regime']} done ({time.time() - t0:.0f}s)")
+
+    pd.concat([p["episodes"] for p in parts], ignore_index=True).to_csv(
+        out / "episodes.csv", index=False
+    )
+    pd.concat([p["schedules"] for p in parts], ignore_index=True).to_csv(
+        out / "schedules.csv", index=False
+    )
+    pd.concat([p["summary"] for p in parts], ignore_index=True).to_csv(
+        out / "summary.csv", index=False
+    )
     save_json(
         {
             "experiment": args.experiment,
@@ -280,34 +370,10 @@ def cmd_evaluate(args) -> None:
             "base_seed": args.base_seed,
             "antithetic": bool(args.antithetic),
             "runs": runs_meta,
-            "params": {
-                regime: {name: res.params for name, res in by_strat.items() if res.params}
-                for regime, by_strat in results.items()
-            },
+            "params": {p["regime"]: p["params"] for p in parts},
         },
         out / "meta.json",
     )
-
-    figures = ensure_dir(out / "figures")
-    for regime, by_strat in results.items():
-        pooled = {}
-        for agent in dict.fromkeys(_agent_of(n) for n in by_strat):
-            members = [r for n, r in by_strat.items() if _agent_of(n) == agent]
-            pooled[agent] = members[0] if len(members) == 1 else pool_results(members, agent)
-        summary = pd.DataFrame(
-            [
-                {
-                    "strategy": name,
-                    "IS_bps": res.aggregate["implementation_shortfall_bps_mean"],
-                    "IS_std": res.aggregate["implementation_shortfall_bps_std"],
-                }
-                for name, res in pooled.items()
-            ]
-        )
-        viz.plot_execution_schedule(pooled, save=str(figures / f"{regime}_schedule.png"))
-        viz.plot_inventory_decay(pooled, save=str(figures / f"{regime}_inventory.png"))
-        viz.plot_is_distribution(pooled, save=str(figures / f"{regime}_is_distribution.png"))
-        viz.plot_risk_vs_cost(summary, save=str(figures / f"{regime}_risk_vs_cost.png"))
     print(f"Wrote {out / 'episodes.csv'}, schedules.csv, summary.csv, meta.json and figures/")
     print(f"Next: rlx report --experiment {args.experiment}")
 
@@ -381,9 +447,9 @@ def comparison_table(
                 max_abs_diff = max(max_abs_diff, float(np.max(np.abs(m[:n] - bench_m[:n]))))
                 per_seed_l1.append(l1.get((str(regime), str(name)), nan))
                 last_m = m[:n]
-                n_degenerate += int(
-                    np.nanmean(column(run, "effective_steps")) < DEGENERATE_EFFECTIVE_STEPS
-                )
+                eff = column(run, "effective_steps")
+                if not np.all(np.isnan(eff)):  # no column -> nothing to flag
+                    n_degenerate += int(np.nanmean(eff) < DEGENERATE_EFFECTIVE_STEPS)
             is_bps = column(grp, "implementation_shortfall_bps")
             trained = bool(grp["seed"].notna().any())
             row = {
@@ -649,6 +715,94 @@ def cmd_report(args) -> None:
     print(f"Wrote {res_dir / 'REPORT.md'} and comparison.csv")
 
 
+# --------------------------------------------------------------------------- sweep
+def signal_sweep_table(
+    episodes_by_experiment: Mapping[str, Tuple[pd.DataFrame, int]],
+    benchmarks: Sequence[str] = ("AlmgrenChriss", "SignalRule"),
+    metric: str = "objective_bps",
+    n_boot: int = 5_000,
+) -> pd.DataFrame:
+    """E2: every strategy's improvement over each benchmark, against signal strength.
+
+    ``episodes_by_experiment`` maps an experiment to its ``episodes.csv`` frame and the
+    bootstrap block length (2 for antithetic pairs).  ``improvement`` is the negated paired
+    gap of :func:`comparison_table` (positive = cheaper than the benchmark), so its CI is
+    the gap's CI flipped -- across training seeds for multi-seed agents.  ``ic`` is the
+    regime's target IC (NaN outside the signal sweep).  ``p_holm`` is Holm-adjusted over
+    every tested row of the sweep, not per experiment.
+    """
+    from rl_execution.experiments import SIGNAL_TARGET_IC
+    from rl_execution.metrics.stats import adjust_pvalues
+
+    rows = []
+    for experiment, (episodes, block) in episodes_by_experiment.items():
+        for bench in benchmarks:
+            table = comparison_table(
+                episodes, benchmark=bench, metric=metric, block=block, n_boot=n_boot
+            )
+            for _, r in table[table["strategy"] != bench].iterrows():
+                rows.append(
+                    {
+                        "experiment": experiment,
+                        "regime": r["regime"],
+                        "ic": SIGNAL_TARGET_IC.get(str(r["regime"]), float("nan")),
+                        "benchmark": bench,
+                        "strategy": r["strategy"],
+                        "n_seeds": r["n_seeds"],
+                        "J_bps": r["J_bps"],
+                        "improvement": -r[f"vs_{bench}"],
+                        "ci_low": -r["ci_high"],
+                        "ci_high": -r["ci_low"],
+                        "p_value": r["p_value"],
+                    }
+                )
+    sweep = pd.DataFrame(rows)
+    if sweep.empty:
+        return sweep
+    sweep["p_holm"] = np.nan
+    tested = sweep["p_value"].notna()
+    if tested.any():
+        _, p_adj = adjust_pvalues(sweep.loc[tested, "p_value"].to_numpy(), method="holm")
+        sweep.loc[tested, "p_holm"] = p_adj
+    return sweep.sort_values(["benchmark", "strategy", "ic"], kind="stable").reset_index(drop=True)
+
+
+def cmd_sweep(args) -> None:
+    from rl_execution import viz
+
+    results_root = Path(args.results_root) if args.results_root else RESULTS_DIR
+    inputs = {}
+    for experiment in args.experiments:
+        res_dir = results_root / experiment
+        meta = load_json(res_dir / "meta.json")
+        block = 2 if meta.get("antithetic") else 1
+        inputs[experiment] = (pd.read_csv(res_dir / "episodes.csv"), block)
+    table = signal_sweep_table(inputs, metric=args.metric)
+    out = ensure_dir(Path(args.out) if args.out else results_root / "sweep")
+    table.to_csv(out / "sweep.csv", index=False)
+    ensure_dir(out / "figures")
+    viz.plot_signal_sweep(table, save=str(out / "figures" / "improvement_vs_ic.png"))
+
+    cols = ["ic", "strategy", "n_seeds", "J_bps", "improvement", "ci_low", "ci_high", "p_holm"]
+    decimals = {"ic": 3, "J_bps": 2, "improvement": 2, "ci_low": 2, "ci_high": 2}
+    parts = [
+        "# Signal sweep (E2)",
+        "",
+        f"- Experiments: {', '.join(args.experiments)}; metric `{args.metric}`.",
+        "- `improvement` is how much cheaper the strategy is than the benchmark, paired "
+        "episode by episode (positive = better). For multi-seed agents the 95% CI is across "
+        "training seeds; `p_holm` is Holm-adjusted over every row of both tables.",
+        "- `ic` is the target information coefficient of the order-book signal; real signals "
+        "sit around 0.05-0.10 (shaded in the figure).",
+        "",
+    ]
+    for bench, sub in table.groupby("benchmark", sort=False):
+        parts += [f"## Improvement over {bench}", "", _markdown_table(sub[cols], decimals), ""]
+    parts += ["![improvement vs IC](figures/improvement_vs_ic.png)", ""]
+    (out / "SWEEP.md").write_text("\n".join(parts), encoding="utf-8")
+    print(f"Wrote {out / 'SWEEP.md'}, sweep.csv and figures/improvement_vs_ic.png")
+
+
 # --------------------------------------------------------------------------- entry point
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rlx", description=__doc__.split("\n\n")[0])
@@ -685,6 +839,9 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--episodes", type=int, default=400)
     e.add_argument("--base-seed", type=int, default=TEST_BASE_SEED)
     e.add_argument("--antithetic", action="store_true", help="evaluate in Z / -Z pairs")
+    e.add_argument(
+        "--jobs", type=int, default=1, help="regimes evaluated in parallel processes (default 1)"
+    )
     e.set_defaults(func=cmd_evaluate)
 
     r = sub.add_parser("report", help="aggregate evaluation results into REPORT.md")
@@ -698,6 +855,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="what the paired comparison is made on",
     )
     r.set_defaults(func=cmd_report)
+
+    s = sub.add_parser("sweep", help="E2: edge over AC and SignalRule against signal strength")
+    s.add_argument(
+        "--experiments", nargs="+", required=True, help="evaluated experiments, one per IC"
+    )
+    s.add_argument("--results-root", default=None, help="default: results/")
+    s.add_argument("--out", default=None, help="default: results/sweep")
+    s.add_argument(
+        "--metric",
+        default="objective_bps",
+        choices=["objective_bps", "implementation_shortfall_bps"],
+    )
+    s.set_defaults(func=cmd_sweep)
     return parser
 
 

@@ -11,7 +11,7 @@
 
 ## Where things stand (v0.2)
 
-**Phases 1 and 2 are done, and Phase 3's first experiment (E1) has run** (see below).
+**Phases 1 and 2 are done; in Phase 3, E1 and E3 have run and E2 is training** (see below).
 Phase 1 brought the calibrated market, the exact
 objective, the TWAP-relative action, the cleaner observation and the null baselines.
 Phase 2 brought vectorised PPO, DoubleDQN fixes, O(1) rewards and checkpoint selection on
@@ -38,6 +38,25 @@ predictable; uneven trade sizes cost more under impact that grows faster than th
 No seed of either agent collapsed to a block trade. Running the evaluation also exposed
 a bug: `rlx evaluate` gave DoubleDQN the continuous action space, which made it look
 exactly like dumping the order at once. That's fixed, and a mismatch now raises an error.
+
+**A longer budget helps (exploratory, not part of the pre-registered E1).** Retrained for
+5M steps, the same ten PPO seeds come within **0.20 bps** of AC (0.07–0.35), and eight of
+the ten clear the 0.10 schedule bar. Every seed improves, most of all those that were worst
+at 2M. A 2M run that follows the 5M learning-rate schedule recovers less than half of that
+gain, so it is the extra training steps, not the slower decay. E2 and E3 therefore train
+PPO for 5M steps.
+
+**E3 result** (one PPO policy trained on a randomised family of markets, ten seeds; scored
+on 3 regimes inside that family and 9 outside it). Measured as the gap to Almgren-Chriss
+in each regime, PPO gets **5.5 bps** worse out of distribution (95% CI 5.0–6.0), against
+6.2 for TWAP. The average hides two regimes. At twice the training volatility every seed is
+20–37 bps worse than AC, because the policy keeps its usual pace where AC speeds up sharply;
+the volatility is outside anything it was trained on, and it does not extrapolate. In the
+mean-reverting market, which the family does include, every seed beats AC by 3–6 bps,
+because it learned the reversion AC ignores. Without those two regimes the degradation is
+0.8 bps (0.7–1.1) against 0.3 for TWAP. A per-regime refit of the two-line `SignalRule`
+beats the single PPO policy in most regimes; that rule is told each regime's parameters,
+so E2 is where the value of the signal is measured cleanly.
 
 The lean core is done: Brownian-only market dynamics, PPO and DQN / Double DQN, one
 `rlx train | evaluate | report` command line, and run folders whose weights are pinned by a

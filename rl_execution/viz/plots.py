@@ -161,6 +161,55 @@ def plot_risk_vs_cost(summary: pd.DataFrame, save: Optional[str] = None):
     return fig
 
 
+#: Fixed colour and marker per strategy in the signal-sweep figure (validated categorical
+#: slots 1-3; the marker is the secondary encoding, so identity never rests on colour).
+_SWEEP_STYLE = {
+    "PPO": ("#2a78d6", "o"),
+    "DoubleDQN": ("#eb6834", "s"),
+    "SignalRule": ("#1baf7a", "^"),
+}
+
+
+def plot_signal_sweep(
+    table: pd.DataFrame,
+    band: Optional[tuple] = (0.05, 0.10),
+    save: Optional[str] = None,
+):
+    """E2: improvement over each benchmark against the signal's IC, one panel per benchmark.
+
+    ``table`` is :func:`rl_execution.cli.signal_sweep_table` output (``benchmark``,
+    ``strategy``, ``ic``, ``improvement``, ``ci_low``, ``ci_high``).  Positive = cheaper
+    than the benchmark.  ``band`` shades the IC range of real order-book signals.
+    """
+    set_style()
+    benchmarks = list(dict.fromkeys(table["benchmark"]))
+    fig, axes = plt.subplots(1, len(benchmarks), figsize=(6.5 * len(benchmarks), 4.8))
+    axes = np.atleast_1d(axes)
+    for ax, bench in zip(axes, benchmarks):
+        sub = table[table["benchmark"] == bench]
+        if band is not None:
+            ax.axvspan(*band, color="0.5", alpha=0.12, lw=0, label="realistic IC")
+        ax.axhline(0.0, color="0.45", lw=1.0)
+        shown = [s for s in _SWEEP_STYLE if s in set(sub["strategy"])]
+        for k, strategy in enumerate(shown):
+            rows = sub[sub["strategy"] == strategy].sort_values("ic")
+            color, marker = _SWEEP_STYLE[strategy]
+            x = rows["ic"].to_numpy(dtype=float) + 0.002 * (k - (len(shown) - 1) / 2)
+            y = rows["improvement"].to_numpy(dtype=float)
+            yerr = np.vstack([y - rows["ci_low"].to_numpy(), rows["ci_high"].to_numpy() - y])
+            ax.errorbar(
+                x, y, yerr=yerr, color=color, marker=marker, ms=6, lw=2, capsize=3,
+                label=strategy,
+            )  # fmt: skip
+        ax.set_xlabel("Information coefficient of the order-book signal (target)")
+        ax.set_ylabel(f"Improvement over {bench} (bps; > 0 = cheaper)")
+        ax.set_title(f"Edge over {bench} vs signal strength")
+        ax.legend(fontsize=8)
+    if save:
+        save_fig(fig, save)
+    return fig
+
+
 def plot_is_distribution(results: Mapping[str, Any], save: Optional[str] = None):
     """Box/violin of per-episode implementation shortfall per strategy."""
     set_style()

@@ -1,5 +1,7 @@
 """Tests for the ``rlx`` command line: argument handling and a tiny end-to-end pipeline."""
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -10,6 +12,7 @@ from rl_execution.cli import (
     main,
     parse_seeds,
     schedule_l1,
+    signal_sweep_table,
     split_degradation,
 )
 from rl_execution.utils.warnings import configure_cli_warnings
@@ -155,6 +158,25 @@ def test_split_degradation_compares_held_out_to_in_distribution_per_seed():
     assert table.loc["TWAP", "n_seeds"] == "—" and np.isnan(table.loc["TWAP", "ci_low"])
 
 
+def test_evaluate_in_parallel_writes_the_same_results(tmp_path):
+    """``--jobs`` runs regimes in worker processes; the files must not depend on it."""
+    common = ["evaluate", "--experiment", "none", "--runs-dir", str(tmp_path / "runs")]
+    common += ["--episodes", "4", "--antithetic", "--regimes", "abm_ac_optimal", "low_vol"]
+    main(common + ["--out", str(tmp_path / "serial")])
+    main(common + ["--out", str(tmp_path / "parallel"), "--jobs", "2"])
+    for name in ("episodes.csv", "schedules.csv", "summary.csv"):
+        pd.testing.assert_frame_equal(
+            pd.read_csv(tmp_path / "serial" / name), pd.read_csv(tmp_path / "parallel" / name)
+        )
+    serial = json.loads((tmp_path / "serial" / "meta.json").read_text())
+    parallel = json.loads((tmp_path / "parallel" / "meta.json").read_text())
+    assert serial["params"] == parallel["params"] and serial["regimes"] == [
+        "abm_ac_optimal",
+        "low_vol",
+    ]
+    assert (tmp_path / "parallel" / "figures" / "low_vol_schedule.png").exists()
+
+
 @pytest.mark.slow
 def test_train_evaluate_report_end_to_end(tmp_path):
     runs, results = tmp_path / "runs", tmp_path / "results"
@@ -197,3 +219,59 @@ def test_train_evaluate_report_end_to_end(tmp_path):
     assert "## Checkpoint selection" in report and "n_degenerate" in report
     assert "code version(s): " in report
     assert (results / "figures" / "validation_curves.png").exists()
+
+
+def _sweep_episodes(regime, ppo_shifts, signal_rule_shift, n=30, seed=0):
+    """AC, SignalRule and a multi-seed PPO on shared market noise, offset by fixed shifts."""
+    market = np.random.default_rng(seed).normal(30.0, 60.0, size=n)
+    runs = [("AlmgrenChriss", "AlmgrenChriss", np.nan, 0.0)]
+    runs += [("SignalRule", "SignalRule", np.nan, signal_rule_shift)]
+    runs += [(f"PPO/s{k}", "PPO", float(k), shift) for k, shift in enumerate(ppo_shifts)]
+    return pd.DataFrame(
+        [
+            {"regime": regime, "strategy": s, "agent": a, "seed": k, "episode": i}
+            | {"objective_bps": m + shift}
+            for s, a, k, shift in runs
+            for i, m in enumerate(market)
+        ]
+    )
+
+
+def test_signal_sweep_table_flips_gaps_into_improvements():
+    inputs = {
+        "e2_ic000": (_sweep_episodes("signal_ic000", [0.1, 0.3], 0.0), 1),
+        "e2_ic100": (_sweep_episodes("signal_ic100", [-2.0, -3.0], -1.0, seed=1), 1),
+    }
+    sweep = signal_sweep_table(inputs, n_boot=2_000)
+    ppo = sweep[(sweep.strategy == "PPO") & (sweep.benchmark == "AlmgrenChriss")]
+    assert list(ppo["ic"]) == [0.0, 0.1]
+    assert list(ppo["improvement"]) == pytest.approx([-0.2, 2.5])  # positive = cheaper
+    assert (ppo["ci_low"] <= ppo["improvement"]).all()
+    assert (ppo["improvement"] <= ppo["ci_high"]).all()
+    vs_rule = sweep[(sweep.strategy == "PPO") & (sweep.benchmark == "SignalRule")]
+    assert list(vs_rule["improvement"]) == pytest.approx([-0.2, 1.5])
+    rule = sweep[(sweep.strategy == "SignalRule") & (sweep.benchmark == "AlmgrenChriss")]
+    assert list(rule["improvement"]) == pytest.approx([0.0, 1.0])
+    assert not ((sweep.strategy == "SignalRule") & (sweep.benchmark == "SignalRule")).any()
+    tested = sweep["p_value"].notna()
+    assert (sweep.loc[tested, "p_holm"] >= sweep.loc[tested, "p_value"]).all()
+
+
+def test_sweep_command_writes_table_report_and_figure(tmp_path):
+    for name, regime, shifts in [
+        ("e2_ic000", "signal_ic000", [0.2, 0.1]),
+        ("e2_ic050", "signal_ic050", [-1.0, -1.5]),
+    ]:
+        res = tmp_path / name
+        res.mkdir()
+        _sweep_episodes(regime, shifts, -0.5).to_csv(res / "episodes.csv", index=False)
+        (res / "meta.json").write_text(json.dumps({"antithetic": False}))
+    out = tmp_path / "e2"
+    main(["sweep", "--experiments", "e2_ic000", "e2_ic050"]
+         + ["--results-root", str(tmp_path), "--out", str(out)])  # fmt: skip
+    sweep = pd.read_csv(out / "sweep.csv")
+    assert set(sweep["ic"]) == {0.0, 0.05}
+    report = (out / "SWEEP.md").read_text(encoding="utf-8")
+    assert "## Improvement over AlmgrenChriss" in report
+    assert "## Improvement over SignalRule" in report
+    assert (out / "figures" / "improvement_vs_ic.png").exists()
