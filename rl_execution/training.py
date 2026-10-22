@@ -51,7 +51,7 @@ from rl_execution.utils.seeding import set_global_seeds
 PathLike = Union[str, Path]
 
 #: Weight file written for each agent inside its run folder.
-MODEL_FILES = {"ppo": "model.zip", "dqn": "model.pt", "doubledqn": "model.pt"}
+MODEL_FILES = {"ppo": "model.zip", "dqn": "model.pt", "doubledqn": "model.pt", "vecppo": "model.pt"}
 
 #: Training environments of seed ``s`` are seeded from ``s * ENV_SEED_STRIDE``, so the
 #: sub-environments of different training seeds never share a seed (and, for ``s`` below
@@ -317,6 +317,10 @@ def train_agent(
 
 def train_run(rc: RunConfig, progress: bool = False) -> TrainingResult:
     """Train the agent described by a :class:`RunConfig`, with checkpoint selection."""
+    if normalize_agent_name(rc.agent) == "vecppo":
+        from rl_execution.vec.train import train_vec_run
+
+        return train_vec_run(rc, progress=progress)
     return train_agent(
         rc.agent,
         total_timesteps=rc.timesteps,

@@ -180,18 +180,30 @@ them.
 ## Phase 4: GPU-batched environment
 
 Because the whole exogenous market is drawn at reset and impact is an additive overlay, a
-step reduces to a few tensor operations. Planned:
+step reduces to a few tensor operations.
 
-- a batched PyTorch environment that steps thousands of episodes at once on a GPU;
-- a compact PPO trained on it;
-- three parity tests against the NumPy reference environment:
-  - identical fills, rewards and observations given the same paths;
-  - matching path statistics;
-  - the GPU PPO reproducing the E1 result;
-- a throughput benchmark. The target is ≥ 1M environment steps per second.
+**Built and tested on the CPU; the GPU run is next, on a lab machine** (branch
+`phase-4-gpu`, instructions in `scripts/lab/README.md`):
 
-Reported numbers keep coming from the reference environment; the GPU path makes E2's sweep
-cheap.
+- `BatchedExecutionEnv` steps thousands of episodes at once as tensor operations, with one
+  market per episode, so a batch can also cover the randomised family.
+- `vecppo`: a compact PPO on it whose defaults mirror the SB3 runs. It selects checkpoints
+  on the numpy simulator's own validation episodes, replayed in one batch, and its actors
+  are scored on the numpy environment, so every reported number still comes from the
+  reference environment.
+- Parity tests 1 and 2 pass on the CPU:
+  - On identical markets the batched environment reproduces the numpy one exactly in
+    float64 (rewards to 1e-14, episode objectives to 1e-12, across eight regimes, both
+    sides and both action types). In float32, the training precision, it stays within
+    1e-3 bps.
+  - Markets drawn in torch match the numpy simulator's statistics (return moments, signal
+    IC, volatility clustering, book inputs).
+- Throughput on a laptop CPU: ~0.9M environment steps/s at 16k episodes per batch, against
+  ~5k for the numpy environment.
+- Parity test 3, fixed before the GPU run: across 10 seeds at 5M steps, VecPPO's gap to
+  Almgren-Chriss must be within ±0.30 bps of SB3's +0.20, with median schedule L1 under
+  0.10 and no degenerate seed. The throughput target is ≥ 1M environment steps per second
+  on one GPU.
 
 ## Phase 5: results and write-up
 

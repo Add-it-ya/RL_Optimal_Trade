@@ -25,6 +25,7 @@ strategies used on trading desks, including the closed-form **Almgren-Chriss** o
 | **Actions** | Relative to TWAP: `a ∈ [−1, 1]`, where −1 waits, 0 trades at the TWAP pace and +1 liquidates now, so an untrained policy starts as TWAP. Discrete agents choose from a grid of TWAP multipliers. |
 | **Baselines** | **TWAP**, **VWAP**, **Almgren-Chriss** (closed-form optimum), plus the nulls an agent must beat: **DumpAtStart**, **WaitThenDump** and **SignalRule** (AC pace tilted by the book signal, one coefficient fitted on validation seeds). |
 | **RL agents** | **PPO** (Stable-Baselines3) and **DQN / Double DQN** written from scratch in PyTorch. |
+| **GPU path** | A **batched PyTorch environment** that steps thousands of episodes at once (CPU or GPU), checked step by step against the reference environment, and a compact **PPO** that trains on it (`rlx train --agent vecppo`). Trained actors are scored on the reference environment like every other run. |
 | **Evaluation** | Every strategy runs on the same pre-drawn market paths (**common random numbers**), so comparisons are paired. Bootstrap CIs with the **training seed as the unit of analysis**, and **Holm** correction across all comparisons. |
 | **Reproducibility** | Each run folder records its config, git SHA, library versions and the **SHA-256 of its weights**; loading refuses weights that don't match. |
 
@@ -114,9 +115,11 @@ rl_execution/
 ├── metrics/              # execution-quality metrics, bootstrap CIs, multiple testing
 ├── experiments/          # regime presets, domain randomisation, cross-regime runner
 ├── viz/                  # plotting
+├── vec/                  # batched torch env (GPU path) + the PPO that trains on it
 ├── training.py           # training + run folders (config, weights, provenance)
-└── cli.py                # rlx train | evaluate | report
-scripts/    brownian_demo.py
+└── cli.py                # rlx train | evaluate | report | sweep
+scripts/    calibrate.py, bench_throughput.py, brownian_demo.py
+scripts/lab/  setup, bring-up check and the Phase 4 run for a GPU machine
 config/     default.yaml
 tests/      pytest suite
 ```
@@ -159,11 +162,24 @@ python scripts/brownian_demo.py          # paths, QQ-plot, vol clustering, quadr
 
 ## ⚡ Training on a GPU machine
 
-The policies are small MLPs and the environment step runs on the CPU, so for this code a
+The SB3 and DQN agents use the numpy environment, one episode at a time, so for them a
 machine's **CPU cores** matter more than its GPU: run several seeds in parallel, one process
 each (`rlx train --seeds 3`, `--seeds 4`, ...; completed seeds are skipped), with
-`OMP_NUM_THREADS=1` so they don't fight over threads. A CUDA build of PyTorch is only
-needed for GPU work:
+`OMP_NUM_THREADS=1` so they don't fight over threads.
+
+The **GPU path** is `vecppo`: PPO on the batched environment in `rl_execution/vec/`, which
+steps every episode of a rollout at once. On a laptop CPU it already runs at ~0.9M
+environment steps/s (vs ~5k for the numpy env), and it is built to run on CUDA:
+
+```bash
+rlx train --agent vecppo --device cuda --seeds 0-9 --timesteps 5000000 --regime abm_ac_optimal --experiment e1_vec
+```
+
+Its checkpoints are selected on the numpy simulator's own validation episodes, and
+`rlx evaluate` scores it on the numpy environment, so its numbers are directly comparable to
+the SB3 runs. `scripts/lab/README.md` is the step-by-step for a lab machine (setup, a
+bring-up check, the full Phase 4 run, bringing results back), and
+`scripts/bench_throughput.py` measures throughput. A CUDA build of PyTorch is needed:
 
 ```bash
 nvidia-smi

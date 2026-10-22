@@ -178,6 +178,25 @@ def test_evaluate_in_parallel_writes_the_same_results(tmp_path):
 
 
 @pytest.mark.slow
+def test_vecppo_trains_on_the_batched_env_and_is_scored_on_the_numpy_env(tmp_path):
+    runs, results = tmp_path / "runs", tmp_path / "results"
+    train = ["train", "--agent", "vecppo", "--timesteps", "2000", "--seeds", "0"]
+    train += ["--regime", "abm_ac_optimal", "--experiment", "g", "--runs-dir", str(runs)]
+    train += ["--n-envs", "32", "--eval-every", "1000", "--val-episodes", "16"]
+    main(train)
+    run = runs / "g" / "VecPPO" / "seed_0"
+    assert (run / "model.pt").exists() and (run / "provenance.json").exists()
+    assert pd.read_csv(run / "val_curve.csv")["step"].iloc[0] == 0
+    main(
+        ["evaluate", "--experiment", "g", "--runs-dir", str(runs), "--out", str(results)]
+        + ["--episodes", "4", "--antithetic"]
+    )
+    assert "VecPPO/s0" in set(pd.read_csv(results / "episodes.csv")["strategy"])
+    main(["report", "--experiment", "g", "--results", str(results)])
+    assert "VecPPO" in (results / "REPORT.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.slow
 def test_train_evaluate_report_end_to_end(tmp_path):
     runs, results = tmp_path / "runs", tmp_path / "results"
     train = ["train", "--agent", "doubledqn", "--timesteps", "300", "--seeds", "0-1"]

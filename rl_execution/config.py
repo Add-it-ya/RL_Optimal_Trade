@@ -332,7 +332,8 @@ class RunConfig:
         """Validate parameter ranges; returns ``self`` so it chains. Raises ``ValueError``."""
         m, e = self.market, self.execution
         checks = {
-            "agent in {ppo, dqn, doubledqn}": self.agent.lower() in {"ppo", "dqn", "doubledqn"},
+            "agent in {ppo, dqn, doubledqn, vecppo}": self.agent.lower()
+            in {"ppo", "dqn", "doubledqn", "vecppo"},
             "timesteps > 0": self.timesteps > 0,
             "seed >= 0": self.seed >= 0,
             "n_envs >= 1": self.n_envs >= 1,

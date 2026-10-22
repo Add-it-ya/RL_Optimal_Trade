@@ -1,8 +1,10 @@
 """Model-free RL agents and the strategy adapter.
 
 Two agents are supported: PPO (through Stable-Baselines3) and DQN / Double DQN
-(implemented from scratch in PyTorch).  Torch / SB3 are imported lazily so the rest of the
-package works without a deep-learning backend.
+(implemented from scratch in PyTorch).  A third, ``vecppo``, is PPO trained on the batched
+torch environment (:mod:`rl_execution.vec`, the GPU path); it is trained by
+``rl_execution.vec.train`` and loaded here like the others.  Torch / SB3 are imported
+lazily so the rest of the package works without a deep-learning backend.
 
 Each algorithm requires a particular action-space parametrisation, exposed via
 :data:`ALGO_ACTION_TYPE` so callers can build a compatible :class:`ExecutionEnv`.
@@ -20,10 +22,11 @@ ALGO_ACTION_TYPE = {
     "dqn": ActionType.DISCRETE,
     "doubledqn": ActionType.DISCRETE,
     "ppo": ActionType.CONTINUOUS,
+    "vecppo": ActionType.CONTINUOUS,
 }
 
 #: Canonical display name of each agent, used for run folders and result tables.
-DISPLAY_NAMES = {"dqn": "DQN", "doubledqn": "DoubleDQN", "ppo": "PPO"}
+DISPLAY_NAMES = {"dqn": "DQN", "doubledqn": "DoubleDQN", "ppo": "PPO", "vecppo": "VecPPO"}
 
 ALL_AGENTS = list(DISPLAY_NAMES.values())
 
@@ -48,6 +51,8 @@ def make_agent(name: str, env, seed: Optional[int] = None, **kwargs) -> BaseAgen
         from rl_execution.agents.ppo import PPOAgent
 
         return PPOAgent(env=env, seed=seed, **kwargs)
+    if key == "vecppo":
+        raise ValueError("vecppo trains on the batched env; use rl_execution.vec.train")
 
     from rl_execution.agents.dqn import DQNAgent
 
@@ -56,10 +61,15 @@ def make_agent(name: str, env, seed: Optional[int] = None, **kwargs) -> BaseAgen
 
 def load_agent_file(name: str, path: str, env=None) -> BaseAgent:
     """Load a saved agent of type ``name`` from ``path``."""
-    if normalize_agent_name(name) == "ppo":
+    key = normalize_agent_name(name)
+    if key == "ppo":
         from rl_execution.agents.ppo import PPOAgent
 
         return PPOAgent.load(path, env=env)
+    if key == "vecppo":
+        from rl_execution.vec.ppo import TorchPolicyAgent
+
+        return TorchPolicyAgent.load(path)
 
     from rl_execution.agents.dqn import DQNAgent
 

@@ -99,6 +99,10 @@ def _train_config(args) -> RunConfig:
     for flag in ("n_envs", "eval_every", "val_episodes"):
         if getattr(args, flag) is not None:
             setattr(rc, flag, getattr(args, flag))
+    if rc.agent == "vecppo" and args.n_envs is None and not args.config:
+        from rl_execution.vec.train import DEFAULT_VEC_ENVS
+
+        rc.n_envs = DEFAULT_VEC_ENVS  # a GPU batch, not SB3's 16
     rc.device = args.device or rc.device
     return rc.validate()
 
@@ -809,7 +813,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     t = sub.add_parser("train", help="train one agent for one or more seeds")
-    t.add_argument("--agent", choices=["ppo", "dqn", "doubledqn"], default=None)
+    t.add_argument(
+        "--agent",
+        choices=["ppo", "dqn", "doubledqn", "vecppo"],
+        default=None,
+        help="vecppo = PPO on the batched torch env (the GPU path; --device cuda)",
+    )
     t.add_argument("--config", default=None, help="YAML RunConfig; explicit flags override it")
     t.add_argument("--timesteps", type=int, default=None)
     t.add_argument("--regime", default=None, help="train on one named regime")
@@ -818,7 +827,9 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--experiment", default=None, help="groups runs under runs/<experiment>/")
     t.add_argument("--runs-dir", default=str(RUNS_DIR))
     t.add_argument("--device", default=None, choices=["cpu", "cuda", "auto"])
-    t.add_argument("--n-envs", type=int, default=None, help="PPO environments (default 16)")
+    t.add_argument(
+        "--n-envs", type=int, default=None, help="PPO environments (default 16; vecppo 256)"
+    )
     t.add_argument(
         "--eval-every", type=int, default=None, help="validation scoring interval in env steps"
     )
