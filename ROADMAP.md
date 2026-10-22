@@ -11,7 +11,7 @@
 
 ## Where things stand (v0.2)
 
-**Phases 1 and 2 are done; in Phase 3, E1 and E3 have run and E2 is training** (see below).
+**Phases 1, 2 and 3 are done**: all three experiments have run (see below).
 Phase 1 brought the calibrated market, the exact
 objective, the TWAP-relative action, the cleaner observation and the null baselines.
 Phase 2 brought vectorised PPO, DoubleDQN fixes, O(1) rewards and checkpoint selection on
@@ -57,6 +57,19 @@ because it learned the reversion AC ignores. Without those two regimes the degra
 0.8 bps (0.7–1.1) against 0.3 for TWAP. A per-regime refit of the two-line `SignalRule`
 beats the single PPO policy in most regimes; that rule is told each regime's parameters,
 so E2 is where the value of the signal is measured cleanly.
+
+**E2 result** (the E1 market with its order-book signal switched on at five strengths; ten
+PPO seeds each, plus DoubleDQN at IC 0.05). PPO's saving over Almgren-Chriss grows with the
+signal, by about 3.6 bps per 0.05 of IC across all 50 seeds. It grows roughly with the
+square of the IC: +2.95 bps at IC 0.10, +13.4 at 0.20. With no signal PPO is still 0.2 bps
+*worse* than AC (0.07–0.35), so the check written for this point ("the CI covers zero")
+fails as stated, but on the expensive side. There is no sign of a simulator exploit. The
+honest headline is the comparison with the two-line `SignalRule`, fitted on validation
+seeds. At realistic signal strengths (IC 0.05–0.10), PPO is up to 0.5 bps worse than it at
+IC 0.05 and level with it at 0.10. It only pulls ahead at IC 0.20 (+0.97 bps, 0.74–1.17),
+two to four times stronger than real order-book signals. DoubleDQN trails both. So a
+learned policy recovers the value of a realistic signal about as well as a tuned linear
+rule, and does better only when the signal is strong.
 
 The lean core is done: Brownian-only market dynamics, PPO and DQN / Double DQN, one
 `rlx train | evaluate | report` command line, and run folders whose weights are pinned by a
