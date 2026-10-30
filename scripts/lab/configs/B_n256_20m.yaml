@@ -1,0 +1,14 @@
+# Config B: A trained four times longer (20M steps). Tests whether more of the same
+# closes the gap, as 2M -> 5M did for SB3 (E1b). About 195k gradient steps.
+#
+# Tuning study on E1 (scripts/lab/run_tuning.sh). Validation every 400,000 steps = 50
+# checkpoints, the same selection pressure as A. Everything not listed is the RunConfig
+# default (ExecutionConfig, validation on 1,000 episodes from seed 1,000,000).
+agent: vecppo
+agent_kwargs: {}
+timesteps: 20000000
+n_envs: 256
+eval_every: 400000
+regime: abm_ac_optimal
+randomized: false
+device: cuda

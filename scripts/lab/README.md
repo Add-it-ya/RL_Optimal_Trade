@@ -112,6 +112,61 @@ tar xzf lab_results_<host>_<date>.tar.gz
 **Don't commit or push from the lab machine.** The commit checks live in local git hooks that
 a fresh clone doesn't have, so changes to the branch are made on the laptop only.
 
+## 7. Tuning rerun (after Phase 4)
+
+Phase 4 passed. On the E1 market, VecPPO on the GPU lands where SB3 does: +0.23 bps above
+Almgren-Chriss (95% CI 0.10–0.38) against SB3's +0.20 (0.07–0.35). Both stop about 0.2 bps
+short of the provable optimum, mostly because a few seeds stall. That gap is about the size
+of E2's PPO-vs-`SignalRule` difference at realistic signal strengths, so a better-optimised
+PPO could change that comparison. The GPU makes larger budgets and batches cheap, so this
+rerun tunes on E1, where the right answer is known, and then redoes E2 with the winner.
+
+| Config | Environments per rollout | Minibatch | Steps | ≈ GPU time, 10 seeds |
+|---|---|---|---|---|
+| A (the Phase 4 run, reused) | 256 | 1,024 | 5M | already done |
+| B | 256 | 1,024 | 20M | ~80 min |
+| C | 4,096 | 8,192 | 50M | ~20 min |
+| D | 16,384 | 32,768 | 200M | ~25 min |
+
+Every config has 50 validation checkpoints, so checkpoint selection is equally strict. C and D
+take about as many gradient steps as A, each on 8× and 32× more data. The configs are in
+`scripts/lab/configs/`.
+
+**How the winner is chosen (fixed before any result).** Every config is scored on a
+*tuning* block of episodes: seeds from 1,500,000, disjoint from the episodes used to pick
+checkpoints and from the test block. The rule:
+1. a config with a degenerate seed is not eligible;
+2. the lowest mean gap to AC wins;
+3. a cheaper config within 0.05 bps of the best is preferred.
+
+Only the winner is then scored on the test block, once (`scripts/lab/pick_config.py`). The
+result is reported as exploratory, next to E1, never instead of it.
+
+Run it from the existing clone (`git pull` fetches the new scripts; it doesn't touch
+`runs/` or `results/`):
+
+```bash
+cd ~/Documents/AdityaRajUG4/RL_Optimal_Trade && git pull && source .venv/bin/activate
+```
+```bash
+QUICK=1 bash scripts/lab/run_tuning.sh
+```
+```bash
+nohup bash scripts/lab/run_tuning.sh > /dev/null 2>&1 &
+```
+
+The `QUICK=1` dry run takes a few minutes, uses `quick_*` names and leaves the real runs
+alone. The real run takes about 2.5 hours and ends with an archive. Its log is in
+`results/lab_logs/tuning_*.log`, and the choice is in `results/tuning/TUNING.md`. Then redo
+E2 with the winner (10 seeds × 5 signal strengths: about 2 hours if C or D wins, about 7 if
+B wins):
+
+```bash
+nohup bash scripts/lab/run_e2_tuned.sh > /dev/null 2>&1 &
+```
+
+It writes `results/e2_tuned/SWEEP.md` and a second archive. Bring both archives back.
+
 ## Troubleshooting
 
 - `CUDA available: False`: the torch build doesn't match the driver; see step 2.

@@ -30,6 +30,12 @@ All notable changes to this project are documented in this file. The format is b
   env on the GPU against the reference, the full Phase 4 run, packing results to bring
   back).
 
+- **Tuning study for the lab** (`scripts/lab/run_tuning.sh`, `run_e2_tuned.sh`,
+  `pick_config.py`, `configs/`). Four VecPPO configurations for E1 (more steps, or 16× and 64×
+  larger batches). Each is scored on a tuning block of validation seeds, disjoint from both
+  checkpoint selection and the test block. A rule fixed in advance picks the winner, and only
+  the winner is tested. E2 is then redone with it. `QUICK=1` is a few-minute dry run.
+
 ### Added: Phase 3 tooling
 - `rlx evaluate` writes `schedules.csv`, and the report gains `L1_vs_AC` (distance of the
   mean schedule from Almgren-Chriss).

@@ -1,0 +1,15 @@
+# Config D: 64x the environments (16,384) with minibatches of 32,768, for 200M steps.
+# Again ~61k gradient steps, each on 32x more data than A.
+#
+# Tuning study on E1 (scripts/lab/run_tuning.sh). Validation every 4,000,000 steps = 50
+# checkpoints, the same selection pressure as A. Everything not listed is the RunConfig
+# default (ExecutionConfig, validation on 1,000 episodes from seed 1,000,000).
+agent: vecppo
+agent_kwargs:
+  minibatch_size: 32768
+timesteps: 200000000
+n_envs: 16384
+eval_every: 4000000
+regime: abm_ac_optimal
+randomized: false
+device: cuda
