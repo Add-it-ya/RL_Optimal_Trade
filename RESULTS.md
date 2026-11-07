@@ -358,7 +358,7 @@ python scripts/make_figures.py
   both E2 sweeps, and refuses a result whose runs folder no longer holds exactly the runs it
   was scored on. On a 12-core laptop, `--quick` (E1 and the tuned VecPPO) takes about 15
   minutes and `--all` about 75 (`--workers 5 --jobs 4`), most of it E3's 12 regimes. Run
-  here on 2026-11-07, all 21 committed results and both sweeps passed: the CPU-trained runs
+  here on 2026-11-07, all 20 committed results and both sweeps passed: the CPU-trained runs
   re-scored bit-identically, the GPU-trained ones within 8e-6 bps.
 - `make_figures.py` redraws the figures on this page from the committed tables.
 - Retraining from scratch: `rlx train --agent ppo --seeds 0-9 --regime abm_ac_optimal

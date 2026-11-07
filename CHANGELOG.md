@@ -26,6 +26,16 @@ All notable changes to this project are documented in this file. The format is b
 ### Changed
 - `meta.json` records run folders relative to the project, so results move between machines
   and checkouts; `rlx report --runs-dir` finds run folders recorded elsewhere.
+- `pyproject.toml` names the author, and the unused `tensorboard` dependency is dropped from
+  the `rl` extra and `requirements.txt` (nothing logs to TensorBoard; Stable-Baselines3 only
+  imports it when asked to).
+
+### Fixed
+- `RESULTS.md` said all 21 committed results passed the reproduction check. There are 20:
+  the run also re-scored a superseded 4-seed result that exists only locally and was never
+  committed (it failed, because more seeds were later trained into its runs folder, and
+  `reproduce.py` now refuses such a result up front). All 20 committed results and both E2
+  sweeps passed. The message of the commit that added `RESULTS.md` repeats the wrong count.
 
 ### Added: the GPU path (roadmap Phase 4)
 - **`rl_execution/vec/torch_env.py`**: `BatchedExecutionEnv` steps `N` episodes in
