@@ -5,17 +5,32 @@ from the vanilla DQN ``max_a' Q_target(s', a')`` to the Double-DQN decoupled for
 ``Q_target(s', argmax_a' Q_online(s', a'))`` (van Hasselt et al., 2016), which reduces the
 maximisation bias of Q-learning.
 
-Only a discrete action space is supported (one Q-value per discrete inventory fraction).
+Only a discrete action space is supported (one Q-value per TWAP multiplier).
+
+Defaults suit the execution task: the horizon is finite and the time left is part of the
+observation, so ``gamma = 1`` (no discounting of costs that are certain to arrive), and the
+target network tracks the online one by Polyak averaging rather than periodic hard copies.
+
+The rest of the defaults come from one diagnosis.  A different trade size moves the
+episode objective by a fraction of a bp, while each transition's target carries tens of bps
+of price noise, so per-action Q estimates are noisier than the gaps between them and a
+greedy policy flips with estimation error.  Hence a **dueling** head (state value and
+action advantage learned separately), large batches (1024), a small learning rate (5e-5)
+and one update every 4 steps.  With the earlier defaults (no dueling, batch 256, lr 5e-4,
+an update every step) no checkpoint ever beat the untrained network on the signal-free
+``abm_ac_optimal`` regime; with these the best checkpoints match Almgren-Chriss.
 """
 
 from __future__ import annotations
 
-from typing import Optional
+import copy
+from typing import Any, Callable, Dict, Optional
 
 import numpy as np
 
 from rl_execution.agents.base import BaseAgent, resolve_device
 from rl_execution.agents.replay_buffer import ReplayBuffer
+from rl_execution.config import ActionType
 
 
 def _torch():
@@ -24,10 +39,33 @@ def _torch():
     return torch
 
 
+def _dueling_head(width: int, n_actions: int):
+    """``Q(s, a) = V(s) + A(s, a) - mean_a A(s, a)`` (Wang et al., 2016).
+
+    One stream learns the value of the state, the other only how much each action adds to
+    it.  That helps exactly when the actions differ by little next to the noise in the
+    return -- here a different trade size moves the episode objective by fractions of a
+    bp, while the price path moves it by tens.
+    """
+    import torch.nn as nn
+
+    class DuelingHead(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.value = nn.Linear(width, 1)
+            self.advantage = nn.Linear(width, n_actions)
+
+        def forward(self, h):
+            adv = self.advantage(h)
+            return self.value(h) + adv - adv.mean(dim=1, keepdim=True)
+
+    return DuelingHead()
+
+
 class QNetwork:
     """Lazily-built MLP Q-network wrapper (keeps torch import local)."""
 
-    def __init__(self, obs_dim: int, n_actions: int, hidden=(64, 64)):
+    def __init__(self, obs_dim: int, n_actions: int, hidden=(64, 64), dueling: bool = False):
         import torch.nn as nn
 
         layers = []
@@ -35,7 +73,7 @@ class QNetwork:
         for h in hidden:
             layers += [nn.Linear(last, h), nn.ReLU()]
             last = h
-        layers += [nn.Linear(last, n_actions)]
+        layers += [_dueling_head(last, n_actions) if dueling else nn.Linear(last, n_actions)]
         self.net = nn.Sequential(*layers)
 
     def __call__(self, x):
@@ -45,21 +83,24 @@ class QNetwork:
 class DQNAgent(BaseAgent):
     """Deep Q-Network with an optional Double-DQN target."""
 
+    action_type = ActionType.DISCRETE
+
     def __init__(
         self,
         env,
         double: bool = False,
         hidden=(64, 64),
-        lr: float = 1e-3,
-        gamma: float = 0.99,
-        buffer_size: int = 100_000,
-        batch_size: int = 128,
-        learning_starts: int = 1_000,
-        train_freq: int = 1,
-        target_update_interval: int = 500,
+        dueling: bool = True,
+        lr: float = 5e-5,
+        gamma: float = 1.0,
+        buffer_size: int = 200_000,
+        batch_size: int = 1024,
+        learning_starts: int = 5_000,
+        train_freq: int = 4,
+        tau: float = 0.005,
         eps_start: float = 1.0,
         eps_end: float = 0.05,
-        eps_fraction: float = 0.5,
+        eps_fraction: float = 0.3,
         max_grad_norm: float = 10.0,
         device: str = "cpu",
         seed: Optional[int] = None,
@@ -74,7 +115,7 @@ class DQNAgent(BaseAgent):
         self.batch_size = batch_size
         self.learning_starts = learning_starts
         self.train_freq = train_freq
-        self.target_update_interval = target_update_interval
+        self.tau = tau
         self.eps_start = eps_start
         self.eps_end = eps_end
         self.eps_fraction = eps_fraction
@@ -88,8 +129,8 @@ class DQNAgent(BaseAgent):
             torch.manual_seed(seed)
         self.rng = np.random.default_rng(seed)
 
-        self.q = QNetwork(self.obs_dim, self.n_actions, hidden)
-        self.q_target = QNetwork(self.obs_dim, self.n_actions, hidden)
+        self.q = QNetwork(self.obs_dim, self.n_actions, hidden, dueling)
+        self.q_target = QNetwork(self.obs_dim, self.n_actions, hidden, dueling)
         self.q.net.to(self.device)
         self.q_target.net.to(self.device)
         self.q_target.net.load_state_dict(self.q.net.state_dict())
@@ -97,6 +138,7 @@ class DQNAgent(BaseAgent):
         self.loss_fn = nn.SmoothL1Loss()  # Huber
         self.buffer = ReplayBuffer(buffer_size, self.obs_dim, rng=self.rng)
         self._hidden = hidden
+        self._dueling = dueling
         self.train_log: list[float] = []
 
     # ------------------------------------------------------------------ acting
@@ -113,11 +155,26 @@ class DQNAgent(BaseAgent):
             q = self.q(x)
             return int(torch.argmax(q, dim=1).item())
 
+    # ------------------------------------------------------------------ weights
+    def get_weights(self) -> Dict[str, Any]:
+        """A detached copy of the online network's weights (for checkpoint selection)."""
+        return copy.deepcopy(self.q.net.state_dict())
+
+    def set_weights(self, weights: Dict[str, Any]) -> None:
+        self.q.net.load_state_dict(weights)
+        self.q_target.net.load_state_dict(weights)
+
     # ------------------------------------------------------------------ training
-    def train(self, total_timesteps: int, progress: bool = False, **kwargs) -> "DQNAgent":
+    def train(
+        self,
+        total_timesteps: int,
+        progress: bool = False,
+        callback: Optional[Callable[[int], None]] = None,
+        **kwargs,
+    ) -> "DQNAgent":
+        """Train for ``total_timesteps`` env steps; ``callback(step)`` runs after each one."""
         env = self.env
         obs, _ = env.reset()
-        ep_reward = 0.0
 
         iterator = range(int(total_timesteps))
         if progress:
@@ -129,25 +186,21 @@ class DQNAgent(BaseAgent):
                 pass
 
         for step in iterator:
-            eps = self._epsilon(step, total_timesteps)
-            if self.rng.random() < eps:
+            if self.rng.random() < self._epsilon(step, total_timesteps):
                 action = int(self.rng.integers(0, self.n_actions))
             else:
                 action = self.predict(obs, deterministic=True)
 
             next_obs, reward, terminated, truncated, _ = env.step(action)
-            done = terminated or truncated
             self.buffer.add(obs, action, reward, next_obs, terminated)
-            ep_reward += reward
             obs = next_obs
-            if done:
+            if terminated or truncated:
                 obs, _ = env.reset()
-                ep_reward = 0.0
 
             if step >= self.learning_starts and step % self.train_freq == 0:
                 self._update()
-            if step % self.target_update_interval == 0:
-                self.q_target.net.load_state_dict(self.q.net.state_dict())
+            if callback is not None:
+                callback(step + 1)
 
         return self
 
@@ -176,6 +229,11 @@ class DQNAgent(BaseAgent):
         self.optimizer.step()
         self.train_log.append(float(loss.item()))
 
+        # Polyak averaging: the target trails the online network smoothly
+        with torch.no_grad():
+            for target_p, online_p in zip(self.q_target.net.parameters(), self.q.net.parameters()):
+                target_p.mul_(1.0 - self.tau).add_(online_p, alpha=self.tau)
+
     # ------------------------------------------------------------------ io
     def save(self, path: str) -> None:
         torch = _torch()
@@ -185,6 +243,7 @@ class DQNAgent(BaseAgent):
                 "obs_dim": self.obs_dim,
                 "n_actions": self.n_actions,
                 "hidden": self._hidden,
+                "dueling": self._dueling,
                 "double": self.double,
             },
             path,
@@ -194,7 +253,11 @@ class DQNAgent(BaseAgent):
     def load(cls, path: str, env=None) -> "DQNAgent":
         torch = _torch()
         ckpt = torch.load(path, map_location="cpu", weights_only=False)
-        agent = cls(env, double=ckpt["double"], hidden=tuple(ckpt["hidden"]))
-        agent.q.net.load_state_dict(ckpt["state_dict"])
-        agent.q_target.net.load_state_dict(ckpt["state_dict"])
+        agent = cls(
+            env,
+            double=ckpt["double"],
+            hidden=tuple(ckpt["hidden"]),
+            dueling=ckpt.get("dueling", False),
+        )
+        agent.set_weights(ckpt["state_dict"])
         return agent

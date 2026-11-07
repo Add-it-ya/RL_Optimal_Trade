@@ -1,0 +1,166 @@
+{
+  "experiment": "e2_ic050",
+  "runs_dir": "runs/e2_ic050",
+  "trained_on": [
+    "signal_ic050"
+  ],
+  "regimes": [
+    "signal_ic050"
+  ],
+  "episodes": 5000,
+  "base_seed": 2000000,
+  "antithetic": true,
+  "runs": [
+    {
+      "strategy": "DoubleDQN/s0",
+      "run_dir": "runs/e2_ic050/DoubleDQN/seed_0",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "ab0371f1959db9e961025dd7411201a657b8341c19e50a1fd7a04823710b7ed1"
+    },
+    {
+      "strategy": "DoubleDQN/s1",
+      "run_dir": "runs/e2_ic050/DoubleDQN/seed_1",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "0dadab9c006253b04d14cde3283ee81064df063ace75c7a768afba2b3c5b2e4d"
+    },
+    {
+      "strategy": "DoubleDQN/s2",
+      "run_dir": "runs/e2_ic050/DoubleDQN/seed_2",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "e3cc952a51f715fe1098cd598a2915aa660374b186a06a75b4409a94575c8b40"
+    },
+    {
+      "strategy": "DoubleDQN/s3",
+      "run_dir": "runs/e2_ic050/DoubleDQN/seed_3",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "5421f50d411e51ba2b68b2e2866b6def04ed09b3984579b4f71b06c9550d028b"
+    },
+    {
+      "strategy": "DoubleDQN/s4",
+      "run_dir": "runs/e2_ic050/DoubleDQN/seed_4",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "81e6ac3ec4e0e6e6de57792e781df995ab4b04fb9752c3a74c0579749ca65d81"
+    },
+    {
+      "strategy": "DoubleDQN/s5",
+      "run_dir": "runs/e2_ic050/DoubleDQN/seed_5",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "af64043ca838effa16ee85378b3992ca02d226eb7b8f2f686fb89e17c6837cfa"
+    },
+    {
+      "strategy": "DoubleDQN/s6",
+      "run_dir": "runs/e2_ic050/DoubleDQN/seed_6",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "0f2219e8ee173d2ec3a53b8412f3b0944cf76cb48ef040cba6d2af679b11f817"
+    },
+    {
+      "strategy": "DoubleDQN/s7",
+      "run_dir": "runs/e2_ic050/DoubleDQN/seed_7",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "c8ba49f6128aad99e4c20e6fa52136960593720e9b4d7624e928c9e7175bf9a9"
+    },
+    {
+      "strategy": "DoubleDQN/s8",
+      "run_dir": "runs/e2_ic050/DoubleDQN/seed_8",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "90d871cfba1de86b9c95d18673c4eeadd4cc907c5797c192be404aa28a98046b"
+    },
+    {
+      "strategy": "DoubleDQN/s9",
+      "run_dir": "runs/e2_ic050/DoubleDQN/seed_9",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "2ebd5bfab34fb4b2d7e2480d32baa9e4cc25f902c8bf9d6f2be1f86dfb4be283"
+    },
+    {
+      "strategy": "PPO/s0",
+      "run_dir": "runs/e2_ic050/PPO/seed_0",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "938901cc8ffa93ab388acd1eb907b37876fab5542d536a2d63cf74b52ded9698"
+    },
+    {
+      "strategy": "PPO/s1",
+      "run_dir": "runs/e2_ic050/PPO/seed_1",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "88cfe8b9cb260501dd4810a2a86f17e3c282a16d0d2d0a04365b329e865edd45"
+    },
+    {
+      "strategy": "PPO/s2",
+      "run_dir": "runs/e2_ic050/PPO/seed_2",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "c335fe7fc017f407a35ca79c487bb3ad3afa1141f0a7f0fd88e93e0e7a675d62"
+    },
+    {
+      "strategy": "PPO/s3",
+      "run_dir": "runs/e2_ic050/PPO/seed_3",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "bf7c86248d446c3ba67e9dcbb41769777527ec32e84d2a011cf6fdaa9b0d57b2"
+    },
+    {
+      "strategy": "PPO/s4",
+      "run_dir": "runs/e2_ic050/PPO/seed_4",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "1b495d6555550e08b2cae28b63e5edccede21c35d1aa6d97a58b524519dc5e99"
+    },
+    {
+      "strategy": "PPO/s5",
+      "run_dir": "runs/e2_ic050/PPO/seed_5",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "4f3f61e3b9e17f949f4000ba32f893de062f52ff0be5ea913884c5eac1beb2b6"
+    },
+    {
+      "strategy": "PPO/s6",
+      "run_dir": "runs/e2_ic050/PPO/seed_6",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "a54e90e172e31d35e2b937d613beb13733cd62ab22e91e01b27b8ef7691ff825"
+    },
+    {
+      "strategy": "PPO/s7",
+      "run_dir": "runs/e2_ic050/PPO/seed_7",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "290a8abaf72f33e82d4167b0e021f37482acbe956960b78356aed23b9029c157"
+    },
+    {
+      "strategy": "PPO/s8",
+      "run_dir": "runs/e2_ic050/PPO/seed_8",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "027645619ab0e2b59cafb230edfcf4ae29b3329d629e961a1c1c1b26244241bd"
+    },
+    {
+      "strategy": "PPO/s9",
+      "run_dir": "runs/e2_ic050/PPO/seed_9",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "c70b88bd43b2028a2db9fb49941ab093a8764536c7bc815d7bf1fa5b19ae8f83"
+    }
+  ],
+  "params": {
+    "signal_ic050": {
+      "AlmgrenChriss": {
+        "risk_aversion": "matched"
+      },
+      "SignalRule": {
+        "risk_aversion": "matched",
+        "beta": 1.0
+      }
+    }
+  }
+}

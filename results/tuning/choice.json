@@ -1,0 +1,51 @@
+{
+  "winner": "C",
+  "config": "scripts/lab/configs/C_n4096_50m.yaml",
+  "rule": "no degenerate seed; lowest mean gap to AC on the tuning block (seeds from 1,500,000); a cheaper config within 0.05 bps of the best wins",
+  "candidates_cheapest_first": [
+    {
+      "label": "A",
+      "results": "results/e1_vec_tuning",
+      "n_seeds": 10,
+      "n_degenerate": 0,
+      "J_bps": 28.975172026812118,
+      "gap_vs_AC": 0.10551606711372585,
+      "ci_low": -0.011478099507512272,
+      "ci_high": 0.2538176196912469,
+      "L1_vs_AC": 0.0740783500189209
+    },
+    {
+      "label": "C",
+      "results": "results/e1t_C_tuning",
+      "n_seeds": 10,
+      "n_degenerate": 0,
+      "J_bps": 28.85730959626074,
+      "gap_vs_AC": -0.01234636343765148,
+      "ci_low": -0.06421814281696703,
+      "ci_high": 0.04295544775085834,
+      "L1_vs_AC": 0.03902892300887949
+    },
+    {
+      "label": "D",
+      "results": "results/e1t_D_tuning",
+      "n_seeds": 10,
+      "n_degenerate": 0,
+      "J_bps": 28.885760747798976,
+      "gap_vs_AC": 0.016104788100580542,
+      "ci_low": -0.03051009496947424,
+      "ci_high": 0.06830860526564599,
+      "L1_vs_AC": 0.03703420255677471
+    },
+    {
+      "label": "B",
+      "results": "results/e1t_B_tuning",
+      "n_seeds": 10,
+      "n_degenerate": 0,
+      "J_bps": 29.093749215655706,
+      "gap_vs_AC": 0.2240932559573067,
+      "ci_low": 0.0859851512818042,
+      "ci_high": 0.3718411282301223,
+      "L1_vs_AC": 0.09077861252337688
+    }
+  ]
+}

@@ -12,10 +12,10 @@ from rl_execution.utils.io import load_json
 from rl_execution.utils.provenance import capture_provenance, config_hash, file_sha256, git_sha
 
 # Tiny DQN budget that still exercises gradient updates (timesteps > learning_starts).
-_FAST = dict(learning_starts=20, batch_size=8, buffer_size=500, target_update_interval=50)
+_FAST = dict(learning_starts=20, batch_size=8, buffer_size=500)
 
 
-def _train_tiny(seed):
+def _train_tiny(seed, **kwargs):
     return train_agent(
         "dqn",
         total_timesteps=200,
@@ -24,6 +24,7 @@ def _train_tiny(seed):
         seed=seed,
         device="cpu",
         agent_kwargs=dict(_FAST),
+        **kwargs,
     )
 
 
@@ -46,15 +47,15 @@ def _first_actions(agent, n=6, seed=7):
 def test_seeding_is_deterministic():
     """Two runs with the same seed produce identical weights, curves and actions (CPU)."""
     torch = pytest.importorskip("torch")
-    agent1, rewards1 = _train_tiny(123)
-    agent2, rewards2 = _train_tiny(123)
+    run1, run2 = _train_tiny(123), _train_tiny(123)
+    agent1, agent2 = run1.agent, run2.agent
 
     # identical training -> bit-identical learned weights ...
     sd1, sd2 = agent1.q.net.state_dict(), agent2.q.net.state_dict()
     for key in sd1:
         assert torch.equal(sd1[key], sd2[key]), f"weights diverged at {key}"
-    # ... identical per-episode reward curve ...
-    assert rewards1 == pytest.approx(rewards2)
+    # ... identical per-episode training log ...
+    assert run1.episodes == run2.episodes and len(run1.episodes) > 0
     # ... and identical first-N actions on a fixed observation sequence.
     assert _first_actions(agent1) == _first_actions(agent2)
 
@@ -62,8 +63,7 @@ def test_seeding_is_deterministic():
 def test_different_seeds_diverge():
     """Sanity check: a different seed actually changes the learned policy."""
     torch = pytest.importorskip("torch")
-    agent1, _ = _train_tiny(1)
-    agent2, _ = _train_tiny(2)
+    agent1, agent2 = _train_tiny(1).agent, _train_tiny(2).agent
     sd1, sd2 = agent1.q.net.state_dict(), agent2.q.net.state_dict()
     assert any(not torch.equal(sd1[k], sd2[k]) for k in sd1)
 
@@ -96,9 +96,9 @@ def _saved_run(tmp_path, seed=5):
         timesteps=200,
         agent_kwargs=dict(_FAST),
     )
-    agent, log = _train_tiny(seed)
-    out = save_run(agent, rc, run_dir(tmp_path, rc.experiment, rc.agent, seed), log)
-    return agent, rc, out
+    result = _train_tiny(seed, eval_every=100, val_episodes=4)
+    out = save_run(result, rc, run_dir(tmp_path, rc.experiment, rc.agent, seed))
+    return result.agent, rc, out
 
 
 def test_run_folder_records_provenance(tmp_path):
@@ -107,7 +107,7 @@ def test_run_folder_records_provenance(tmp_path):
     _, rc, out = _saved_run(tmp_path)
 
     assert out == tmp_path / "default" / "DQN" / "seed_5"
-    assert {"config.yaml", "model.pt", "provenance.json", "train_log.csv"} <= {
+    assert {"config.yaml", "model.pt", "provenance.json", "train_log.csv", "val_curve.csv"} <= {
         p.name for p in out.iterdir()
     }
     prov = load_json(out / "provenance.json")
@@ -116,6 +116,8 @@ def test_run_folder_records_provenance(tmp_path):
     assert prov["config_hash"] == config_hash(rc)
     assert prov["weights_sha256"] == file_sha256(out / "model.pt")
     assert "numpy" in prov["lib_versions"]
+    assert prov["selected_step"] in (0, 100, 200)
+    assert prov["selected_val_objective_bps"] <= prov["initial_val_objective_bps"]
     assert find_runs(tmp_path) == [out]
 
 
@@ -131,8 +133,7 @@ def test_load_run_rejects_swapped_weights(tmp_path):
     """Weights that do not match provenance.json are refused, not silently loaded."""
     pytest.importorskip("torch")
     _, _, out = _saved_run(tmp_path, seed=5)
-    other, _ = _train_tiny(6)
-    other.save(str(out / "model.pt"))  # a different run's weights under this folder
+    _train_tiny(6).agent.save(str(out / "model.pt"))  # a different run's weights under this folder
     with pytest.raises(ValueError, match="do not match"):
         load_run(out)
 

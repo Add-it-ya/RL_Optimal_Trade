@@ -108,6 +108,33 @@ def plot_training_curve(
     return fig
 
 
+def plot_validation_curves(
+    curves: Mapping[str, pd.DataFrame],
+    references: Optional[Mapping[str, float]] = None,
+    save: Optional[str] = None,
+):
+    """Validation objective against training steps, one line per run.
+
+    ``curves`` maps a run name to a frame with ``step`` and ``objective_bps`` columns;
+    ``references`` optionally adds horizontal lines (e.g. the TWAP and Almgren-Chriss
+    objectives) to show what "good" looks like.
+    """
+    set_style()
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for name, df in curves.items():
+        ax.plot(df["step"], df["objective_bps"], marker="o", ms=3, label=name)
+    for name, value in (references or {}).items():
+        ax.axhline(value, ls="--", lw=1, color="0.4")
+        ax.annotate(name, (0, value), textcoords="offset points", xytext=(2, 3), fontsize=8)
+    ax.set_xlabel("Training steps")
+    ax.set_ylabel("Validation objective (bps, lower is better)")
+    ax.set_title("Checkpoint selection on validation seeds")
+    ax.legend(fontsize=8)
+    if save:
+        save_fig(fig, save)
+    return fig
+
+
 # --------------------------------------------------------------------------- comparisons
 def plot_risk_vs_cost(summary: pd.DataFrame, save: Optional[str] = None):
     """Mean implementation shortfall against its standard deviation, one point per strategy.
@@ -129,6 +156,55 @@ def plot_risk_vs_cost(summary: pd.DataFrame, save: Optional[str] = None):
     ax.set_xlabel("IS standard deviation (bps)")
     ax.set_ylabel("Mean implementation shortfall (bps)")
     ax.set_title("Cost vs risk (lower-left is better)")
+    if save:
+        save_fig(fig, save)
+    return fig
+
+
+#: Fixed colour and marker per strategy in the signal-sweep figure (validated categorical
+#: slots 1-3; the marker is the secondary encoding, so identity never rests on colour).
+_SWEEP_STYLE = {
+    "PPO": ("#2a78d6", "o"),
+    "DoubleDQN": ("#eb6834", "s"),
+    "SignalRule": ("#1baf7a", "^"),
+}
+
+
+def plot_signal_sweep(
+    table: pd.DataFrame,
+    band: Optional[tuple] = (0.05, 0.10),
+    save: Optional[str] = None,
+):
+    """E2: improvement over each benchmark against the signal's IC, one panel per benchmark.
+
+    ``table`` is :func:`rl_execution.cli.signal_sweep_table` output (``benchmark``,
+    ``strategy``, ``ic``, ``improvement``, ``ci_low``, ``ci_high``).  Positive = cheaper
+    than the benchmark.  ``band`` shades the IC range of real order-book signals.
+    """
+    set_style()
+    benchmarks = list(dict.fromkeys(table["benchmark"]))
+    fig, axes = plt.subplots(1, len(benchmarks), figsize=(6.5 * len(benchmarks), 4.8))
+    axes = np.atleast_1d(axes)
+    for ax, bench in zip(axes, benchmarks):
+        sub = table[table["benchmark"] == bench]
+        if band is not None:
+            ax.axvspan(*band, color="0.5", alpha=0.12, lw=0, label="realistic IC")
+        ax.axhline(0.0, color="0.45", lw=1.0)
+        shown = [s for s in _SWEEP_STYLE if s in set(sub["strategy"])]
+        for k, strategy in enumerate(shown):
+            rows = sub[sub["strategy"] == strategy].sort_values("ic")
+            color, marker = _SWEEP_STYLE[strategy]
+            x = rows["ic"].to_numpy(dtype=float) + 0.002 * (k - (len(shown) - 1) / 2)
+            y = rows["improvement"].to_numpy(dtype=float)
+            yerr = np.vstack([y - rows["ci_low"].to_numpy(), rows["ci_high"].to_numpy() - y])
+            ax.errorbar(
+                x, y, yerr=yerr, color=color, marker=marker, ms=6, lw=2, capsize=3,
+                label=strategy,
+            )  # fmt: skip
+        ax.set_xlabel("Information coefficient of the order-book signal (target)")
+        ax.set_ylabel(f"Improvement over {bench} (bps; > 0 = cheaper)")
+        ax.set_title(f"Edge over {bench} vs signal strength")
+        ax.legend(fontsize=8)
     if save:
         save_fig(fig, save)
     return fig

@@ -6,6 +6,106 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added: results and write-up (roadmap Phase 5)
+- **`RESULTS.md`**: E1, E2, E3 and the GPU path, with tables (objective, mean / sd / CVaR95
+  of implementation shortfall, effective steps, schedule distance, paired gap to
+  Almgren-Chriss with CIs across training seeds), figures in light and dark, the verdicts
+  against the pre-registered criteria, the GPU tuning study, and what went wrong in v0.1.
+- **The runs and evaluations behind it are committed**: config, weights, provenance and
+  validation curve of every reported run (~16 MB, no training logs), and each evaluation's
+  report and tables (no per-episode CSVs). `.gitignore` allow-lists them by name; everything
+  else under `runs/` and `results/` stays ignored.
+- **`scripts/reproduce.py`**: re-runs each committed evaluation from its `meta.json`
+  (verifying every weight hash on load), rebuilds both E2 sweeps, and compares the tables
+  with the committed ones to 1e-3 bps. `--quick` checks E1 and the tuned VecPPO.
+- **`scripts/make_figures.py`**: the `RESULTS.md` figures from the committed tables, plus the
+  Almgren-Chriss cost-risk frontier on the E1 test block (`results/frontier/`).
+- `rlx report` adds `IS_cvar95` (mean of the worst 5% of implementation shortfall) and writes
+  `per_seed.csv`, the per-seed gaps behind each mean and CI.
+
+### Changed
+- `meta.json` records run folders relative to the project, so results move between machines
+  and checkouts; `rlx report --runs-dir` finds run folders recorded elsewhere.
+
+### Added: the GPU path (roadmap Phase 4)
+- **`rl_execution/vec/torch_env.py`**: `BatchedExecutionEnv` steps `N` episodes in
+  lockstep as tensor operations on a CPU or a GPU. It has the same book, fills, impact,
+  mark-to-market reward and observation as `ExecutionEnv`, and one market per episode, so
+  a batch can also cover the domain-randomised family (`sample_randomized_markets`). Paths
+  are either drawn in torch (`generate_paths`) or copied from the numpy simulator for given
+  seeds (`reference_paths`). Episodes that finish early keep stepping with zero reward, and
+  `step` reports which ones were alive. Latency and ambient volume are not modelled.
+- **`rl_execution/vec/ppo.py`, `rlx train --agent vecppo`**: a compact PPO on the batched
+  env whose defaults mirror the SB3 runs (64-64 tanh, orthogonal init, log-std -1, Adam
+  eps 1e-5, linear lr decay, gamma 1, GAE 0.95, clip 0.2, 10 epochs, 256 environments per
+  rollout). Checkpoints are selected on the numpy simulator's validation episodes replayed
+  in one batch. The trained actor is saved as a plain torch module, loaded by `load_run`
+  and scored by `rlx evaluate` on the numpy env.
+- **Parity tests** (`tests/test_vec_env.py`). On identical markets: float64 rewards to
+  1e-14, objectives to 1e-12, fills and observations exact up to float32 rounding, over
+  eight regimes, both sides and both action spaces. Float32 stays within float32
+  resolution. Torch-drawn markets match the numpy statistics. Batched validation equals
+  `evaluate`, an untrained VecPPO is TWAP, and actors round-trip through a file.
+- **`scripts/bench_throughput.py`** and **`scripts/lab/`**: a throughput benchmark, and a
+  kit for a GPU lab machine (setup for Linux and Windows, a bring-up check that tests the
+  env on the GPU against the reference, the full Phase 4 run, packing results to bring
+  back).
+
+- **Tuning study for the lab** (`scripts/lab/run_tuning.sh`, `run_e2_tuned.sh`,
+  `pick_config.py`, `configs/`). Four VecPPO configurations for E1 (more steps, or 16× and 64×
+  larger batches). Each is scored on a tuning block of validation seeds, disjoint from both
+  checkpoint selection and the test block. A rule fixed in advance picks the winner, and only
+  the winner is tested. E2 is then redone with it. `QUICK=1` is a few-minute dry run.
+
+### Added: Phase 3 tooling
+- `rlx evaluate` writes `schedules.csv`, and the report gains `L1_vs_AC` (distance of the
+  mean schedule from Almgren-Chriss).
+- The E2 signal-sweep regimes `signal_ic000..200`, and the E3 split `IN_DISTRIBUTION` /
+  `HELD_OUT` with `outside_randomized_support()`. Randomised experiments are reported by
+  split, with a degradation table.
+- `rlx evaluate --jobs N` evaluates regimes in parallel processes, one regime in memory at a
+  time. `rlx sweep` reports E2's improvement over AC and `SignalRule` against IC.
+- PPO's `lr_end_fraction` lets the linear learning-rate decay stop above zero.
+
+### Fixed
+- `rlx evaluate` ran DQN agents in the continuous action space (the saved config keeps
+  the CLI default), which scored every DoubleDQN seed exactly like DumpAtStart. Agents now
+  declare their action space, and a mismatched environment raises.
+- Exact ties (e.g. `SignalRule` with a fitted coefficient of 0 against Almgren-Chriss) were
+  reported as significant differences of 1e-12 bps. Below 1e-6 bps they are now ties.
+
+### Changed: training (roadmap Phase 2)
+- **Checkpoint selection on validation seeds.** Every `eval_every` env steps (default 100k)
+  and once before training, the deterministic policy is scored on `val_episodes` (default
+  1,000) episodes from the validation block (seeds from 1,000,000; antithetic pairs for a
+  fixed market). The best weights are the ones saved. Each run folder gains `val_curve.csv`,
+  and `provenance.json` records the selected step and the untrained, selected and final
+  validation objectives. Test seeds (from 2,000,000) stay untouched until `rlx evaluate`.
+- **PPO** trains on a `DummyVecEnv` of `n_envs` environments (default 16; ~3x the
+  single-env throughput, and faster than subprocess workers for this cheap environment),
+  with `gamma = 1`, `log_std_init = -1` (initial action noise ~0.37 around the TWAP pace
+  rather than 1.0), a learning rate decaying linearly from 3e-4, and 256 steps per env per
+  rollout. Sub-environment seeds are spread `1000` apart per training seed so seeds never
+  share episodes.
+- **DoubleDQN**: `gamma = 1`, Polyak target updates (`tau = 0.005`) instead of hard copies,
+  a 200k buffer, 5k warm-up steps and epsilon annealed over the first 30% of training --
+  plus the settings that made it learn at all: a **dueling** head (state value and action
+  advantage learned separately), batch 1024, learning rate 5e-5 and one update every 4
+  steps. A different trade size moves the objective by a fraction of a bp while each
+  target carries tens of bps of price noise, so per-action Q estimates were noisier than
+  the gaps between them and the greedy policy flipped; with the earlier settings no
+  checkpoint ever beat the untrained network.
+- **Rewards are O(1)**: `reward_scale` now defaults to 0.01 (one unit per 100 bps). In raw
+  bps the value loss dominated PPO's jointly clipped gradient.
+- `RunConfig` gains `n_envs`, `eval_every`, `val_episodes` and `val_base_seed` (replacing
+  the unused `eval_episodes` / `eval_base_seed`), and the default budget is 2M steps.
+  `rlx train` gains `--n-envs`, `--eval-every` and `--val-episodes`.
+- `train_agent` returns a `TrainingResult` (agent, per-episode log with the objective,
+  validation curve, selected step); `train_log.csv` records env steps, return and objective.
+- **Report**: an `n_degenerate` column counts trained seeds whose policy trades in fewer
+  than 5 effective steps, and a "Checkpoint selection" table plus validation-curve figure
+  show what each run kept.
+
 ### Changed: the problem formulation (roadmap Phase 1)
 - **Calibrated market defaults** so impact and price risk trade off: per-step volatility
   0.004 (was 0.02), temporary impact 1.5e-4 (was 1e-5), permanent impact 2e-5 (was 5e-6),

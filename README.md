@@ -6,11 +6,24 @@ inventory to sell (or buy) into a simulated limit order book, so as to minimise 
 shortfall, market impact and inventory risk. It is benchmarked against the classical
 strategies used on trading desks, including the closed-form **Almgren-Chriss** optimum.
 
-> **Status (v0.2).** The codebase was cut down to a lean core: Brownian-only market dynamics,
-> two agents, three commands. The v0.1 headline results were withdrawn after an audit showed
-> the reward favoured a do-nothing, dump-at-the-end policy and the published weights could no
-> longer be reproduced. New results will be published from the recalibrated simulator, with
-> confidence intervals across training seeds. See [ROADMAP.md](ROADMAP.md) for the plan.
+> **Results (v0.2): [RESULTS.md](RESULTS.md).** On a recalibrated simulator, with 10 training
+> seeds per configuration and 5,000 held-out test episodes:
+>
+> - With no signal, PPO recovers the closed-form Almgren-Chriss optimum to within
+>   **0.09 bps** (95% CI 0.05–0.12) on a 28.9 bps objective after a GPU tuning study
+>   (pre-registered 2M-step run: 0.47 bps).
+> - With a realistic order-book signal (IC 0.025–0.05), it does **not** beat a two-line rule
+>   that uses the same signal; the tuned policy pulls ahead from IC 0.10.
+> - Out of its training distribution it loses 5.5 bps against the optimum, mostly at twice
+>   the training volatility (and 0.8 bps without that regime and a mean-reverting one where
+>   it beats the optimum).
+> - A batched GPU copy of the environment runs ~29M steps/s and matches the reference to
+>   1e-12.
+>
+> The weights and tables behind every number are committed; `scripts/reproduce.py`
+> re-scores them. The v0.1 results were withdrawn after an audit
+> ([what went wrong](RESULTS.md#what-went-wrong-in-v01-and-how-it-was-found)); see
+> [ROADMAP.md](ROADMAP.md) for the plan.
 
 ---
 
@@ -25,6 +38,7 @@ strategies used on trading desks, including the closed-form **Almgren-Chriss** o
 | **Actions** | Relative to TWAP: `a ∈ [−1, 1]`, where −1 waits, 0 trades at the TWAP pace and +1 liquidates now, so an untrained policy starts as TWAP. Discrete agents choose from a grid of TWAP multipliers. |
 | **Baselines** | **TWAP**, **VWAP**, **Almgren-Chriss** (closed-form optimum), plus the nulls an agent must beat: **DumpAtStart**, **WaitThenDump** and **SignalRule** (AC pace tilted by the book signal, one coefficient fitted on validation seeds). |
 | **RL agents** | **PPO** (Stable-Baselines3) and **DQN / Double DQN** written from scratch in PyTorch. |
+| **GPU path** | A **batched PyTorch environment** that steps thousands of episodes at once (CPU or GPU), checked step by step against the reference environment, and a compact **PPO** that trains on it (`rlx train --agent vecppo`). Trained actors are scored on the reference environment like every other run. |
 | **Evaluation** | Every strategy runs on the same pre-drawn market paths (**common random numbers**), so comparisons are paired. Bootstrap CIs with the **training seed as the unit of analysis**, and **Holm** correction across all comparisons. |
 | **Reproducibility** | Each run folder records its config, git SHA, library versions and the **SHA-256 of its weights**; loading refuses weights that don't match. |
 
@@ -39,7 +53,7 @@ pip install -e ".[rl,dev]"
 Train, evaluate on held-out test seeds, and write a report:
 
 ```bash
-rlx train --agent ppo --timesteps 200000 --seeds 0-4 --regime abm_ac_optimal --experiment e1
+rlx train --agent ppo --seeds 0-9 --regime abm_ac_optimal --experiment e1
 ```
 ```bash
 rlx evaluate --experiment e1 --episodes 2000 --antithetic
@@ -53,8 +67,29 @@ rlx report --experiment e1
 - `rlx evaluate` scores every run of the experiment plus the baselines on a block of test
   seeds that training never sees, and writes `results/<experiment>/` (per-episode CSV, summary,
   figures).
-- `rlx report` turns that into `results/<experiment>/REPORT.md`: IS level and spread per
-  strategy, the paired gap to TWAP with a 95% CI, and Holm-adjusted p-values.
+- `rlx report` turns that into `results/<experiment>/REPORT.md`: the objective, the level,
+  spread and tail of implementation shortfall, the paired gap to Almgren-Chriss with a 95% CI
+  across training seeds, Holm-adjusted p-values, a degenerate-policy count, and which
+  checkpoint each run kept.
+
+### How training works
+
+- **Budget and speed.** The default is 2M environment steps per seed. PPO steps 16
+  environments in one process (`--n-envs`), at roughly 6–7k steps/s on one CPU core, so
+  about five minutes per seed (DoubleDQN, which trains one environment with a gradient
+  update every 4 steps, takes ~25 minutes). Subprocess workers are slower here: the
+  environment is cheap and inter-process overhead dominates. Run seeds in parallel as
+  separate processes instead.
+- **Three disjoint seed blocks.** Training draws its own episodes; **validation** seeds start
+  at 1,000,000 and are used only to pick checkpoints; **test** seeds start at 2,000,000 and
+  are touched only by `rlx evaluate`.
+- **Checkpoint selection.** Every `--eval-every` steps (default 100k), and once before
+  training, the deterministic policy is scored on `--val-episodes` (default 1,000)
+  validation episodes. The weights with the lowest mean objective are the ones saved.
+  `val_curve.csv` in each run folder shows the whole curve, including whether training
+  improved on the untrained policy at all.
+- **Rewards are O(1).** `reward_scale` is 0.01 (one unit per 100 bps); reported numbers use
+  the unscaled `objective_bps`.
 
 `rlx train --config run.yaml` accepts a full `RunConfig` in YAML (see `config/default.yaml` for
 the market and execution sections); explicit flags override it.
@@ -93,10 +128,15 @@ rl_execution/
 ├── metrics/              # execution-quality metrics, bootstrap CIs, multiple testing
 ├── experiments/          # regime presets, domain randomisation, cross-regime runner
 ├── viz/                  # plotting
+├── vec/                  # batched torch env (GPU path) + the PPO that trains on it
 ├── training.py           # training + run folders (config, weights, provenance)
-└── cli.py                # rlx train | evaluate | report
-scripts/    brownian_demo.py
+└── cli.py                # rlx train | evaluate | report | sweep
+scripts/    calibrate.py, bench_throughput.py, brownian_demo.py,
+            reproduce.py (re-score the committed runs), make_figures.py (RESULTS.md figures)
+scripts/lab/  setup, bring-up check, the Phase 4 run and the tuning study for a GPU machine
 config/     default.yaml
+runs/, results/  the runs and evaluations behind RESULTS.md (weights, configs, tables)
+docs/figures/    RESULTS.md figures (light and dark)
 tests/      pytest suite
 ```
 
@@ -138,10 +178,25 @@ python scripts/brownian_demo.py          # paths, QQ-plot, vol clustering, quadr
 
 ## ⚡ Training on a GPU machine
 
-The policies are small MLPs and the environment step runs on the CPU, so for this code a
+The SB3 and DQN agents use the numpy environment, one episode at a time, so for them a
 machine's **CPU cores** matter more than its GPU: run several seeds in parallel, one process
-each, with `OMP_NUM_THREADS=1` so they don't fight over threads. A CUDA build of PyTorch is
-only needed for GPU work:
+each (`rlx train --seeds 3`, `--seeds 4`, ...; completed seeds are skipped), with
+`OMP_NUM_THREADS=1` so they don't fight over threads.
+
+The **GPU path** is `vecppo`: PPO on the batched environment in `rl_execution/vec/`, which
+steps every episode of a rollout at once. On a laptop CPU it already runs at ~0.9M
+environment steps/s (vs ~5k for the numpy env); on one lab GPU (RTX 4000 Ada) it reached
+~29M, and a 5M-step VecPPO run takes ~2 minutes:
+
+```bash
+rlx train --agent vecppo --device cuda --seeds 0-9 --timesteps 5000000 --regime abm_ac_optimal --experiment e1_vec
+```
+
+Its checkpoints are selected on the numpy simulator's own validation episodes, and
+`rlx evaluate` scores it on the numpy environment, so its numbers are directly comparable to
+the SB3 runs. `scripts/lab/README.md` is the step-by-step for a lab machine (setup, a
+bring-up check, the full Phase 4 run, bringing results back), and
+`scripts/bench_throughput.py` measures throughput. A CUDA build of PyTorch is needed:
 
 ```bash
 nvidia-smi
@@ -174,6 +229,13 @@ optimum. The simulator is a research tool, not a P&L forecast.
 
 ```bash
 python -m pytest -q
+```
+
+To re-score the committed policies and check the published tables (E1 and the tuned
+VecPPO; `--all` for everything):
+
+```bash
+python scripts/reproduce.py --quick
 ```
 
 ## 📦 Requirements

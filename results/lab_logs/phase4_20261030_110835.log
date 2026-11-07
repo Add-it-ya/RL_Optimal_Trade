@@ -1,0 +1,593 @@
+== Phase 4 on adminit, Fri Oct 30 11:08:35 AM IST 2026, commit 8ca9303
+== 1/5 bring-up check
+python   3.12.3 on Linux-6.17.0-1033-oem-x86_64-with-glibc2.39
+torch    2.15.0+cu132 (built for CUDA 13.2)
+CUDA     available: True
+GPU 0    NVIDIA RTX 4000 Ada Generation, 19.5 GiB
+
+parity on the GPU against the numpy reference (64 episodes per regime):
+  ok   abm_ac_optimal  float64 3.5e-12  float32 reward 1.1e-05, objective 2.8e-03 bps
+  ok   sideways        float64 4.7e-12  float32 reward 1.1e-05, objective 2.3e-03 bps
+  ok   gbm_medium      float64 4.7e-12  float32 reward 1.7e-05, objective 2.5e-03 bps
+  ok   clustered_vol   float64 3.5e-12  float32 reward 1.6e-05, objective 2.7e-03 bps
+  ok   thin            float64 3.5e-12  float32 reward 1.2e-05, objective 3.2e-03 bps
+
+batched env throughput on the GPU:
+  N=4096          4,424,031 steps/s
+  N=65536        28,360,224 steps/s
+  N=262144       30,971,509 steps/s
+  target >= 1M steps/s: met
+
+READY
+== 2/5 CPU parity tests
+..............................................                           [100%]
+== 3/5 throughput benchmark
+torch 2.15.0+cu132, CUDA available: True
+GPU: NVIDIA RTX 4000 Ada Generation
+numpy env    cpu    N=1               26,110 steps/s
+SB3 PPO      cpu    N=16              12,934 steps/s
+batched env  cpu    N=256             17,790 steps/s
+batched env  cpu    N=4096         2,964,825 steps/s
+batched env  cpu    N=16384        4,594,344 steps/s
+VecPPO       cpu    N=256             30,278 steps/s
+VecPPO       cpu    N=4096            44,926 steps/s
+batched env  cuda   N=256            260,884 steps/s
+batched env  cuda   N=4096         4,070,822 steps/s
+batched env  cuda   N=16384       16,524,671 steps/s
+batched env  cuda   N=65536       29,175,279 steps/s
+batched env  cuda   N=262144      28,728,218 steps/s
+VecPPO       cuda   N=256             37,080 steps/s
+VecPPO       cuda   N=4096           421,074 steps/s
+VecPPO       cuda   N=16384        1,345,647 steps/s
+
+Phase 4 target (>= 1M env steps/s on one GPU): met (29,175,279)
+Wrote results/bench/throughput.csv
+== 4/5 VecPPO on the E1 market (0-9, 5000000 steps, cuda)
+train  VecPPO seed=0 5,000,000 steps on abm_ac_optimal
+step          0  validation objective 32.858 bps
+step    101,472  validation objective 33.676 bps
+step    203,547  validation objective 31.349 bps
+step    300,648  validation objective 31.588 bps
+step    403,017  validation objective 31.773 bps
+step    500,297  validation objective 32.469 bps
+step    602,697  validation objective 32.327 bps
+step    705,097  validation objective 31.214 bps
+step    802,377  validation objective 31.683 bps
+step    904,777  validation objective 29.858 bps
+step  1,002,057  validation objective 29.626 bps
+step  1,104,457  validation objective 29.378 bps
+step  1,201,737  validation objective 29.854 bps
+step  1,304,137  validation objective 30.046 bps
+step  1,401,417  validation objective 29.928 bps
+step  1,503,817  validation objective 30.016 bps
+step  1,601,097  validation objective 30.299 bps
+step  1,703,497  validation objective 30.799 bps
+step  1,800,777  validation objective 30.104 bps
+step  1,903,177  validation objective 30.593 bps
+step  2,000,457  validation objective 31.150 bps
+step  2,102,857  validation objective 30.751 bps
+step  2,200,137  validation objective 30.079 bps
+step  2,302,537  validation objective 29.794 bps
+step  2,404,937  validation objective 30.022 bps
+step  2,502,217  validation objective 30.328 bps
+step  2,604,617  validation objective 30.022 bps
+step  2,701,897  validation objective 30.081 bps
+step  2,804,297  validation objective 30.123 bps
+step  2,901,577  validation objective 29.812 bps
+step  3,003,977  validation objective 29.794 bps
+step  3,101,257  validation objective 29.815 bps
+step  3,203,657  validation objective 29.818 bps
+step  3,300,937  validation objective 29.820 bps
+step  3,403,337  validation objective 29.847 bps
+step  3,500,617  validation objective 29.849 bps
+step  3,603,017  validation objective 29.944 bps
+step  3,700,297  validation objective 29.771 bps
+step  3,802,697  validation objective 30.261 bps
+step  3,905,097  validation objective 29.789 bps
+step  4,002,377  validation objective 29.901 bps
+step  4,104,777  validation objective 29.907 bps
+step  4,202,057  validation objective 29.687 bps
+step  4,304,457  validation objective 29.910 bps
+step  4,401,737  validation objective 29.750 bps
+step  4,504,137  validation objective 29.570 bps
+step  4,601,417  validation objective 29.494 bps
+step  4,703,817  validation objective 29.512 bps
+step  4,801,097  validation objective 29.451 bps
+step  4,903,497  validation objective 29.551 bps
+step  5,000,777  validation objective 29.533 bps
+       done in 124s; validation objective 32.86 bps untrained -> 29.38 bps at step 1,104,457 (selected)
+       -> <clone>/runs/e1_vec/VecPPO/seed_0
+train  VecPPO seed=1 5,000,000 steps on abm_ac_optimal
+step          0  validation objective 32.868 bps
+step    101,773  validation objective 34.230 bps
+step    203,996  validation objective 32.829 bps
+step    301,154  validation objective 32.909 bps
+step    403,514  validation objective 31.418 bps
+step    500,785  validation objective 31.304 bps
+step    603,178  validation objective 30.740 bps
+step    700,458  validation objective 30.605 bps
+step    802,858  validation objective 30.903 bps
+step    900,138  validation objective 30.450 bps
+step  1,002,538  validation objective 29.745 bps
+step  1,104,938  validation objective 29.254 bps
+step  1,202,218  validation objective 29.600 bps
+step  1,304,618  validation objective 29.703 bps
+step  1,401,898  validation objective 29.102 bps
+step  1,504,298  validation objective 29.237 bps
+step  1,601,578  validation objective 29.299 bps
+step  1,703,978  validation objective 28.937 bps
+step  1,801,258  validation objective 28.924 bps
+step  1,903,658  validation objective 28.895 bps
+step  2,000,938  validation objective 28.897 bps
+step  2,103,338  validation objective 28.922 bps
+step  2,200,618  validation objective 29.046 bps
+step  2,303,018  validation objective 29.050 bps
+step  2,400,298  validation objective 29.172 bps
+step  2,502,698  validation objective 29.251 bps
+step  2,605,098  validation objective 29.124 bps
+step  2,702,378  validation objective 29.228 bps
+step  2,804,778  validation objective 29.405 bps
+step  2,902,058  validation objective 29.208 bps
+step  3,004,458  validation objective 29.362 bps
+step  3,101,738  validation objective 29.433 bps
+step  3,204,138  validation objective 29.481 bps
+step  3,301,418  validation objective 29.493 bps
+step  3,403,818  validation objective 29.392 bps
+step  3,501,098  validation objective 29.527 bps
+step  3,603,498  validation objective 29.665 bps
+step  3,700,778  validation objective 29.808 bps
+step  3,803,178  validation objective 29.682 bps
+step  3,900,458  validation objective 29.659 bps
+step  4,002,858  validation objective 29.691 bps
+step  4,100,138  validation objective 29.555 bps
+step  4,202,538  validation objective 29.552 bps
+step  4,304,938  validation objective 29.594 bps
+step  4,402,218  validation objective 29.503 bps
+step  4,504,618  validation objective 29.471 bps
+step  4,601,898  validation objective 29.556 bps
+step  4,704,298  validation objective 29.457 bps
+step  4,801,578  validation objective 29.433 bps
+step  4,903,978  validation objective 29.521 bps
+step  5,001,258  validation objective 29.464 bps
+       done in 121s; validation objective 32.87 bps untrained -> 28.89 bps at step 1,903,658 (selected)
+       -> <clone>/runs/e1_vec/VecPPO/seed_1
+train  VecPPO seed=2 5,000,000 steps on abm_ac_optimal
+step          0  validation objective 32.820 bps
+step    101,539  validation objective 33.671 bps
+step    203,867  validation objective 34.976 bps
+step    300,995  validation objective 33.679 bps
+step    403,338  validation objective 32.573 bps
+step    500,603  validation objective 31.507 bps
+step    603,003  validation objective 31.366 bps
+step    700,283  validation objective 30.639 bps
+step    802,683  validation objective 30.104 bps
+step    905,083  validation objective 30.010 bps
+step  1,002,363  validation objective 29.751 bps
+step  1,104,763  validation objective 30.132 bps
+step  1,202,043  validation objective 29.837 bps
+step  1,304,443  validation objective 30.373 bps
+step  1,401,723  validation objective 31.726 bps
+step  1,504,123  validation objective 31.475 bps
+step  1,601,403  validation objective 31.861 bps
+step  1,703,803  validation objective 32.627 bps
+step  1,801,083  validation objective 32.535 bps
+step  1,903,483  validation objective 31.568 bps
+step  2,000,763  validation objective 30.744 bps
+step  2,103,163  validation objective 30.753 bps
+step  2,200,443  validation objective 30.637 bps
+step  2,302,843  validation objective 30.107 bps
+step  2,400,123  validation objective 29.654 bps
+step  2,502,523  validation objective 29.822 bps
+step  2,604,923  validation objective 29.985 bps
+step  2,702,203  validation objective 29.817 bps
+step  2,804,603  validation objective 29.430 bps
+step  2,901,883  validation objective 29.163 bps
+step  3,004,283  validation objective 29.263 bps
+step  3,101,563  validation objective 29.195 bps
+step  3,203,963  validation objective 29.053 bps
+step  3,301,243  validation objective 29.081 bps
+step  3,403,643  validation objective 29.068 bps
+step  3,500,923  validation objective 29.104 bps
+step  3,603,323  validation objective 29.098 bps
+step  3,700,603  validation objective 29.420 bps
+step  3,803,003  validation objective 29.296 bps
+step  3,900,283  validation objective 29.148 bps
+step  4,002,683  validation objective 29.249 bps
+step  4,105,083  validation objective 29.404 bps
+step  4,202,363  validation objective 29.295 bps
+step  4,304,763  validation objective 29.111 bps
+step  4,402,043  validation objective 29.158 bps
+step  4,504,443  validation objective 29.190 bps
+step  4,601,723  validation objective 29.405 bps
+step  4,704,123  validation objective 29.068 bps
+step  4,801,403  validation objective 29.192 bps
+step  4,903,803  validation objective 29.317 bps
+step  5,001,083  validation objective 29.347 bps
+       done in 123s; validation objective 32.82 bps untrained -> 29.05 bps at step 3,203,963 (selected)
+       -> <clone>/runs/e1_vec/VecPPO/seed_2
+train  VecPPO seed=3 5,000,000 steps on abm_ac_optimal
+step          0  validation objective 32.841 bps
+step    101,474  validation objective 33.483 bps
+step    203,476  validation objective 31.704 bps
+step    300,714  validation objective 33.023 bps
+step    403,096  validation objective 31.259 bps
+step    500,348  validation objective 30.829 bps
+step    602,748  validation objective 30.052 bps
+step    700,028  validation objective 30.782 bps
+step    802,428  validation objective 30.237 bps
+step    904,828  validation objective 29.584 bps
+step  1,002,108  validation objective 29.168 bps
+step  1,104,508  validation objective 29.203 bps
+step  1,201,788  validation objective 29.399 bps
+step  1,304,188  validation objective 29.410 bps
+step  1,401,468  validation objective 29.669 bps
+step  1,503,868  validation objective 30.123 bps
+step  1,601,148  validation objective 30.274 bps
+step  1,703,548  validation objective 30.208 bps
+step  1,800,828  validation objective 30.381 bps
+step  1,903,228  validation objective 30.698 bps
+step  2,000,508  validation objective 30.891 bps
+step  2,102,908  validation objective 30.679 bps
+step  2,200,188  validation objective 30.839 bps
+step  2,302,588  validation objective 30.806 bps
+step  2,404,988  validation objective 30.730 bps
+step  2,502,268  validation objective 30.811 bps
+step  2,604,668  validation objective 31.022 bps
+step  2,701,948  validation objective 30.447 bps
+step  2,804,348  validation objective 30.195 bps
+step  2,901,628  validation objective 30.520 bps
+step  3,004,028  validation objective 30.274 bps
+step  3,101,308  validation objective 30.366 bps
+step  3,203,708  validation objective 30.548 bps
+step  3,300,988  validation objective 30.442 bps
+step  3,403,388  validation objective 30.663 bps
+step  3,500,668  validation objective 30.824 bps
+step  3,603,068  validation objective 30.813 bps
+step  3,700,348  validation objective 30.786 bps
+step  3,802,748  validation objective 30.909 bps
+step  3,900,028  validation objective 30.961 bps
+step  4,002,428  validation objective 31.219 bps
+step  4,104,828  validation objective 31.158 bps
+step  4,202,108  validation objective 30.973 bps
+step  4,304,508  validation objective 30.672 bps
+step  4,401,788  validation objective 30.786 bps
+step  4,504,188  validation objective 30.839 bps
+step  4,601,468  validation objective 30.725 bps
+step  4,703,868  validation objective 30.684 bps
+step  4,801,148  validation objective 30.525 bps
+step  4,903,548  validation objective 30.721 bps
+step  5,000,828  validation objective 30.989 bps
+       done in 120s; validation objective 32.84 bps untrained -> 29.17 bps at step 1,002,108 (selected)
+       -> <clone>/runs/e1_vec/VecPPO/seed_3
+train  VecPPO seed=4 5,000,000 steps on abm_ac_optimal
+step          0  validation objective 32.855 bps
+step    101,624  validation objective 34.711 bps
+step    203,879  validation objective 34.471 bps
+step    301,019  validation objective 34.318 bps
+step    403,419  validation objective 34.043 bps
+step    500,699  validation objective 33.116 bps
+step    603,098  validation objective 32.676 bps
+step    700,354  validation objective 32.866 bps
+step    802,754  validation objective 33.768 bps
+step    900,034  validation objective 34.506 bps
+step  1,002,434  validation objective 34.363 bps
+step  1,104,834  validation objective 33.515 bps
+step  1,202,114  validation objective 33.140 bps
+step  1,304,514  validation objective 32.837 bps
+step  1,401,794  validation objective 32.647 bps
+step  1,504,194  validation objective 32.271 bps
+step  1,601,474  validation objective 31.677 bps
+step  1,703,874  validation objective 31.870 bps
+step  1,801,154  validation objective 32.070 bps
+step  1,903,554  validation objective 31.714 bps
+step  2,000,834  validation objective 30.668 bps
+step  2,103,234  validation objective 30.613 bps
+step  2,200,514  validation objective 30.951 bps
+step  2,302,914  validation objective 30.351 bps
+step  2,400,194  validation objective 30.222 bps
+step  2,502,594  validation objective 30.115 bps
+step  2,604,994  validation objective 29.776 bps
+step  2,702,274  validation objective 29.790 bps
+step  2,804,674  validation objective 29.698 bps
+step  2,901,954  validation objective 29.705 bps
+step  3,004,354  validation objective 29.501 bps
+step  3,101,634  validation objective 29.578 bps
+step  3,204,034  validation objective 29.524 bps
+step  3,301,314  validation objective 29.332 bps
+step  3,403,714  validation objective 29.353 bps
+step  3,500,994  validation objective 29.374 bps
+step  3,603,394  validation objective 29.351 bps
+step  3,700,674  validation objective 29.612 bps
+step  3,803,074  validation objective 29.707 bps
+step  3,900,354  validation objective 29.592 bps
+step  4,002,754  validation objective 29.827 bps
+step  4,100,034  validation objective 29.850 bps
+step  4,202,434  validation objective 29.545 bps
+step  4,304,834  validation objective 29.514 bps
+step  4,402,114  validation objective 29.426 bps
+step  4,504,514  validation objective 29.400 bps
+step  4,601,794  validation objective 29.286 bps
+step  4,704,194  validation objective 29.263 bps
+step  4,801,474  validation objective 29.224 bps
+step  4,903,874  validation objective 29.234 bps
+step  5,001,154  validation objective 29.258 bps
+       done in 122s; validation objective 32.86 bps untrained -> 29.22 bps at step 4,801,474 (selected)
+       -> <clone>/runs/e1_vec/VecPPO/seed_4
+train  VecPPO seed=5 5,000,000 steps on abm_ac_optimal
+step          0  validation objective 32.889 bps
+step    101,450  validation objective 33.554 bps
+step    203,471  validation objective 33.377 bps
+step    300,550  validation objective 31.978 bps
+step    402,875  validation objective 32.816 bps
+step    500,140  validation objective 32.578 bps
+step    602,540  validation objective 32.892 bps
+step    704,940  validation objective 33.261 bps
+step    802,220  validation objective 33.148 bps
+step    904,620  validation objective 33.450 bps
+step  1,001,900  validation objective 33.914 bps
+step  1,104,300  validation objective 33.840 bps
+step  1,201,580  validation objective 32.629 bps
+step  1,303,980  validation objective 32.338 bps
+step  1,401,260  validation objective 31.714 bps
+step  1,503,660  validation objective 32.060 bps
+step  1,600,940  validation objective 32.410 bps
+step  1,703,340  validation objective 32.196 bps
+step  1,800,620  validation objective 31.380 bps
+step  1,903,020  validation objective 31.206 bps
+step  2,000,300  validation objective 31.084 bps
+step  2,102,700  validation objective 30.557 bps
+step  2,205,100  validation objective 29.784 bps
+step  2,302,380  validation objective 30.037 bps
+step  2,404,780  validation objective 30.100 bps
+step  2,502,060  validation objective 30.506 bps
+step  2,604,460  validation objective 30.080 bps
+step  2,701,740  validation objective 29.860 bps
+step  2,804,140  validation objective 29.846 bps
+step  2,901,420  validation objective 29.955 bps
+step  3,003,820  validation objective 29.740 bps
+step  3,101,100  validation objective 29.724 bps
+step  3,203,500  validation objective 29.983 bps
+step  3,300,780  validation objective 29.984 bps
+step  3,403,180  validation objective 29.915 bps
+step  3,500,460  validation objective 29.705 bps
+step  3,602,860  validation objective 29.736 bps
+step  3,700,140  validation objective 29.563 bps
+step  3,802,540  validation objective 29.545 bps
+step  3,904,940  validation objective 29.414 bps
+step  4,002,220  validation objective 29.270 bps
+step  4,104,620  validation objective 29.305 bps
+step  4,201,900  validation objective 29.204 bps
+step  4,304,300  validation objective 29.612 bps
+step  4,401,580  validation objective 29.466 bps
+step  4,503,980  validation objective 29.563 bps
+step  4,601,260  validation objective 29.522 bps
+step  4,703,660  validation objective 29.435 bps
+step  4,800,940  validation objective 29.426 bps
+step  4,903,340  validation objective 29.147 bps
+step  5,000,620  validation objective 29.122 bps
+       done in 120s; validation objective 32.89 bps untrained -> 29.12 bps at step 5,000,620 (selected)
+       -> <clone>/runs/e1_vec/VecPPO/seed_5
+train  VecPPO seed=6 5,000,000 steps on abm_ac_optimal
+step          0  validation objective 32.863 bps
+step    101,618  validation objective 34.623 bps
+step    203,869  validation objective 33.682 bps
+step    301,027  validation objective 33.198 bps
+step    403,365  validation objective 33.185 bps
+step    500,611  validation objective 31.058 bps
+step    602,974  validation objective 31.299 bps
+step    700,223  validation objective 30.678 bps
+step    802,618  validation objective 29.988 bps
+step    905,013  validation objective 29.392 bps
+step  1,002,293  validation objective 29.989 bps
+step  1,104,693  validation objective 29.446 bps
+step  1,201,973  validation objective 30.998 bps
+step  1,304,373  validation objective 30.748 bps
+step  1,401,653  validation objective 29.918 bps
+step  1,504,053  validation objective 29.709 bps
+step  1,601,333  validation objective 29.441 bps
+step  1,703,733  validation objective 29.085 bps
+step  1,801,013  validation objective 29.083 bps
+step  1,903,413  validation objective 29.072 bps
+step  2,000,693  validation objective 28.989 bps
+step  2,103,093  validation objective 29.078 bps
+step  2,200,373  validation objective 29.131 bps
+step  2,302,773  validation objective 29.395 bps
+step  2,400,053  validation objective 29.187 bps
+step  2,502,453  validation objective 29.134 bps
+step  2,604,853  validation objective 29.266 bps
+step  2,702,133  validation objective 29.227 bps
+step  2,804,533  validation objective 29.195 bps
+step  2,901,813  validation objective 29.130 bps
+step  3,004,213  validation objective 29.247 bps
+step  3,101,493  validation objective 29.151 bps
+step  3,203,893  validation objective 29.217 bps
+step  3,301,173  validation objective 29.178 bps
+step  3,403,573  validation objective 29.216 bps
+step  3,500,853  validation objective 29.254 bps
+step  3,603,253  validation objective 29.137 bps
+step  3,700,533  validation objective 29.184 bps
+step  3,802,933  validation objective 29.269 bps
+step  3,900,213  validation objective 29.327 bps
+step  4,002,613  validation objective 29.288 bps
+step  4,105,013  validation objective 29.355 bps
+step  4,202,293  validation objective 29.328 bps
+step  4,304,693  validation objective 29.208 bps
+step  4,401,973  validation objective 29.235 bps
+step  4,504,373  validation objective 29.168 bps
+step  4,601,653  validation objective 29.175 bps
+step  4,704,053  validation objective 29.170 bps
+step  4,801,333  validation objective 29.243 bps
+step  4,903,733  validation objective 29.145 bps
+step  5,001,013  validation objective 29.130 bps
+       done in 121s; validation objective 32.86 bps untrained -> 28.99 bps at step 2,000,693 (selected)
+       -> <clone>/runs/e1_vec/VecPPO/seed_6
+train  VecPPO seed=7 5,000,000 steps on abm_ac_optimal
+step          0  validation objective 32.535 bps
+step    101,186  validation objective 33.377 bps
+step    203,347  validation objective 33.893 bps
+step    300,586  validation objective 33.297 bps
+step    402,970  validation objective 32.664 bps
+step    500,250  validation objective 33.998 bps
+step    602,650  validation objective 32.859 bps
+step    705,050  validation objective 33.501 bps
+step    802,330  validation objective 33.568 bps
+step    904,730  validation objective 33.150 bps
+step  1,002,010  validation objective 32.722 bps
+step  1,104,410  validation objective 30.920 bps
+step  1,201,690  validation objective 30.290 bps
+step  1,304,090  validation objective 30.573 bps
+step  1,401,370  validation objective 29.881 bps
+step  1,503,770  validation objective 29.572 bps
+step  1,601,050  validation objective 29.589 bps
+step  1,703,450  validation objective 29.378 bps
+step  1,800,730  validation objective 29.898 bps
+step  1,903,130  validation objective 29.991 bps
+step  2,000,410  validation objective 29.842 bps
+step  2,102,810  validation objective 29.723 bps
+step  2,200,090  validation objective 29.651 bps
+step  2,302,490  validation objective 29.660 bps
+step  2,404,890  validation objective 29.602 bps
+step  2,502,170  validation objective 29.602 bps
+step  2,604,570  validation objective 29.622 bps
+step  2,701,850  validation objective 29.545 bps
+step  2,804,250  validation objective 29.154 bps
+step  2,901,530  validation objective 29.116 bps
+step  3,003,930  validation objective 29.194 bps
+step  3,101,210  validation objective 29.189 bps
+step  3,203,610  validation objective 29.056 bps
+step  3,300,890  validation objective 29.027 bps
+step  3,403,290  validation objective 28.979 bps
+step  3,500,570  validation objective 29.008 bps
+step  3,602,970  validation objective 29.034 bps
+step  3,700,250  validation objective 29.010 bps
+step  3,802,650  validation objective 29.045 bps
+step  3,905,050  validation objective 29.188 bps
+step  4,002,330  validation objective 29.307 bps
+step  4,104,730  validation objective 28.986 bps
+step  4,202,010  validation objective 28.941 bps
+step  4,304,410  validation objective 28.951 bps
+step  4,401,690  validation objective 28.920 bps
+step  4,504,090  validation objective 28.983 bps
+step  4,601,370  validation objective 29.008 bps
+step  4,703,770  validation objective 28.991 bps
+step  4,801,050  validation objective 29.061 bps
+step  4,903,450  validation objective 29.036 bps
+step  5,000,730  validation objective 29.038 bps
+       done in 122s; validation objective 32.53 bps untrained -> 28.92 bps at step 4,401,690 (selected)
+       -> <clone>/runs/e1_vec/VecPPO/seed_7
+train  VecPPO seed=8 5,000,000 steps on abm_ac_optimal
+step          0  validation objective 32.874 bps
+step    101,217  validation objective 34.331 bps
+step    203,486  validation objective 32.926 bps
+step    300,559  validation objective 33.592 bps
+step    402,944  validation objective 32.648 bps
+step    500,213  validation objective 32.737 bps
+step    602,613  validation objective 32.349 bps
+step    705,013  validation objective 30.203 bps
+step    802,293  validation objective 29.924 bps
+step    904,693  validation objective 29.670 bps
+step  1,001,973  validation objective 29.616 bps
+step  1,104,373  validation objective 29.375 bps
+step  1,201,653  validation objective 29.416 bps
+step  1,304,053  validation objective 29.350 bps
+step  1,401,333  validation objective 29.652 bps
+step  1,503,733  validation objective 29.256 bps
+step  1,601,013  validation objective 29.216 bps
+step  1,703,413  validation objective 28.985 bps
+step  1,800,693  validation objective 29.245 bps
+step  1,903,093  validation objective 29.908 bps
+step  2,000,373  validation objective 29.799 bps
+step  2,102,773  validation objective 29.515 bps
+step  2,200,053  validation objective 30.043 bps
+step  2,302,453  validation objective 30.071 bps
+step  2,404,853  validation objective 30.127 bps
+step  2,502,133  validation objective 30.295 bps
+step  2,604,533  validation objective 30.584 bps
+step  2,701,813  validation objective 30.625 bps
+step  2,804,213  validation objective 30.475 bps
+step  2,901,493  validation objective 30.518 bps
+step  3,003,893  validation objective 30.712 bps
+step  3,101,173  validation objective 30.314 bps
+step  3,203,573  validation objective 29.928 bps
+step  3,300,853  validation objective 30.334 bps
+step  3,403,253  validation objective 30.056 bps
+step  3,500,533  validation objective 30.064 bps
+step  3,602,933  validation objective 29.922 bps
+step  3,700,213  validation objective 29.713 bps
+step  3,802,613  validation objective 29.378 bps
+step  3,905,013  validation objective 29.330 bps
+step  4,002,293  validation objective 29.290 bps
+step  4,104,693  validation objective 29.253 bps
+step  4,201,973  validation objective 29.185 bps
+step  4,304,373  validation objective 29.296 bps
+step  4,401,653  validation objective 29.223 bps
+step  4,504,053  validation objective 29.131 bps
+step  4,601,333  validation objective 29.137 bps
+step  4,703,733  validation objective 29.177 bps
+step  4,801,013  validation objective 29.050 bps
+step  4,903,413  validation objective 29.080 bps
+step  5,000,693  validation objective 29.144 bps
+       done in 121s; validation objective 32.87 bps untrained -> 28.98 bps at step 1,703,413 (selected)
+       -> <clone>/runs/e1_vec/VecPPO/seed_8
+train  VecPPO seed=9 5,000,000 steps on abm_ac_optimal
+step          0  validation objective 32.926 bps
+step    101,683  validation objective 33.847 bps
+step    203,720  validation objective 32.766 bps
+step    300,927  validation objective 32.982 bps
+step    403,309  validation objective 33.419 bps
+step    500,589  validation objective 32.463 bps
+step    602,989  validation objective 30.202 bps
+step    700,269  validation objective 30.846 bps
+step    802,669  validation objective 31.310 bps
+step    905,069  validation objective 31.731 bps
+step  1,002,349  validation objective 31.079 bps
+step  1,104,749  validation objective 30.590 bps
+step  1,202,029  validation objective 30.161 bps
+step  1,304,429  validation objective 30.035 bps
+step  1,401,709  validation objective 30.219 bps
+step  1,504,109  validation objective 29.779 bps
+step  1,601,389  validation objective 30.452 bps
+step  1,703,789  validation objective 30.564 bps
+step  1,801,069  validation objective 31.082 bps
+step  1,903,469  validation objective 30.782 bps
+step  2,000,749  validation objective 30.155 bps
+step  2,103,149  validation objective 29.426 bps
+step  2,200,429  validation objective 29.456 bps
+step  2,302,829  validation objective 29.707 bps
+step  2,400,109  validation objective 29.456 bps
+step  2,502,509  validation objective 29.212 bps
+step  2,604,909  validation objective 29.278 bps
+step  2,702,189  validation objective 29.178 bps
+step  2,804,589  validation objective 29.284 bps
+step  2,901,869  validation objective 29.094 bps
+step  3,004,269  validation objective 29.040 bps
+step  3,101,549  validation objective 29.077 bps
+step  3,203,949  validation objective 29.420 bps
+step  3,301,229  validation objective 29.376 bps
+step  3,403,629  validation objective 29.159 bps
+step  3,500,909  validation objective 29.141 bps
+step  3,603,309  validation objective 29.155 bps
+step  3,700,589  validation objective 29.171 bps
+step  3,802,989  validation objective 29.206 bps
+step  3,900,269  validation objective 29.335 bps
+step  4,002,669  validation objective 29.137 bps
+step  4,105,069  validation objective 29.097 bps
+step  4,202,349  validation objective 29.136 bps
+step  4,304,749  validation objective 29.140 bps
+step  4,402,029  validation objective 29.225 bps
+step  4,504,429  validation objective 29.383 bps
+step  4,601,709  validation objective 29.350 bps
+step  4,704,109  validation objective 29.282 bps
+step  4,801,389  validation objective 29.163 bps
+step  4,903,789  validation objective 29.136 bps
+step  5,001,069  validation objective 29.141 bps
+       done in 121s; validation objective 32.93 bps untrained -> 29.04 bps at step 3,004,269 (selected)
+       -> <clone>/runs/e1_vec/VecPPO/seed_9
+Evaluating 16 strategies x 1 regimes, 5000 episodes each (test seeds from 2,000,000, antithetic) ...
+  abm_ac_optimal done (125s)
+Wrote <clone>/results/e1_vec/episodes.csv, schedules.csv, summary.csv, meta.json and figures/
+Next: rlx report --experiment e1_vec
+Wrote <clone>/results/e1_vec/REPORT.md and comparison.csv
+== 5/5 archive
+Wrote lab_results_adminit_20261030_1131.tar.gz (7.4M) with: runs/e1_vec results/e1_vec results/bench results/lab_logs
+== done; log: results/lab_logs/phase4_20261030_110835.log

@@ -1,0 +1,54 @@
+{
+  "experiment": "e1b_lr06",
+  "runs_dir": "runs/e1b_lr06",
+  "trained_on": [
+    "abm_ac_optimal"
+  ],
+  "regimes": [
+    "abm_ac_optimal"
+  ],
+  "episodes": 5000,
+  "base_seed": 2000000,
+  "antithetic": true,
+  "runs": [
+    {
+      "strategy": "PPO/s0",
+      "run_dir": "runs/e1b_lr06/PPO/seed_0",
+      "git_sha": "30c5304c9da8d822dabcbebffeb19e7dfcaf3be0",
+      "git_dirty": false,
+      "weights_sha256": "e29ce658d97470d36472f1a6fb248c7e2c55d3ebea16b6cbe920fd6f069695f6"
+    },
+    {
+      "strategy": "PPO/s1",
+      "run_dir": "runs/e1b_lr06/PPO/seed_1",
+      "git_sha": "30c5304c9da8d822dabcbebffeb19e7dfcaf3be0",
+      "git_dirty": false,
+      "weights_sha256": "22898f0a0ba4f4ae9d0a8acb6ba322914321a9ab25e4c1dfffb96104fdc0fc76"
+    },
+    {
+      "strategy": "PPO/s2",
+      "run_dir": "runs/e1b_lr06/PPO/seed_2",
+      "git_sha": "30c5304c9da8d822dabcbebffeb19e7dfcaf3be0",
+      "git_dirty": false,
+      "weights_sha256": "b3eb296a55fa589a7dbe4470239d46f4a2b2b08d5b1e9f415e54e5e19e23603c"
+    },
+    {
+      "strategy": "PPO/s3",
+      "run_dir": "runs/e1b_lr06/PPO/seed_3",
+      "git_sha": "30c5304c9da8d822dabcbebffeb19e7dfcaf3be0",
+      "git_dirty": false,
+      "weights_sha256": "7a4f7cef9e5865f0c4126d8ea3b77566f70c4a25504f85061fc17aa339d98060"
+    }
+  ],
+  "params": {
+    "abm_ac_optimal": {
+      "AlmgrenChriss": {
+        "risk_aversion": "matched"
+      },
+      "SignalRule": {
+        "risk_aversion": "matched",
+        "beta": 0.0
+      }
+    }
+  }
+}

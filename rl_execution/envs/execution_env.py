@@ -33,8 +33,9 @@ book depth relative to a fixed reference, so it differs between thin and deep ma
           + [ P&L of the inventory still held, over the next step ]       (mark-to-market)
           - lambda * (sigma_t * x_{t+1})^2                                 (variance penalty)
 
-times ``reward_scale``.  The first two terms telescope, so an episode's rewards sum to
-exactly ``-(implementation_shortfall + lambda * sum_t sigma_t^2 x_t^2)``: the mean-variance
+times ``reward_scale`` (default 0.01).  The first two terms telescope, so an episode's
+rewards sum to exactly ``-reward_scale * (implementation_shortfall + lambda * sum_t
+sigma_t^2 x_t^2)``: the mean-variance
 objective that Almgren-Chriss minimises in closed form.  Marking the held inventory to
 market every step also keeps the price move since arrival -- already sunk, and the biggest
 source of variance in implementation shortfall -- out of every future return.

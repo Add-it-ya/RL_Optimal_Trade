@@ -14,6 +14,35 @@ RUNS_DIR = PROJECT_ROOT / "runs"
 RESULTS_DIR = PROJECT_ROOT / "results"
 
 
+def portable_path(path: os.PathLike | str) -> str:
+    """``path`` as a POSIX string relative to the project root when it lies inside it.
+
+    Paths recorded in ``meta.json`` stay valid on another machine or checkout (and carry
+    no local user names); a path outside the project is kept absolute.
+    """
+    p = Path(path).resolve()
+    try:
+        return p.relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        return p.as_posix()
+
+
+def resolve_run_dir(recorded: str, runs_dir: os.PathLike | str = RUNS_DIR) -> Path:
+    """Find a run folder recorded in ``meta.json``, on this machine.
+
+    A relative path is taken from the project root. If the recorded folder does not exist
+    (e.g. an absolute path from another machine), its last three parts
+    (``<experiment>/<Agent>/seed_<k>``) are looked up under ``runs_dir``.
+    """
+    p = Path(recorded)
+    if not p.is_absolute():
+        p = PROJECT_ROOT / p
+    if p.exists():
+        return p
+    parts = [s for s in recorded.replace("\\", "/").split("/") if s]
+    return Path(runs_dir).joinpath(*parts[-3:])
+
+
 def ensure_dir(path: os.PathLike | str) -> Path:
     p = Path(path)
     p.mkdir(parents=True, exist_ok=True)

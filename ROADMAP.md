@@ -11,10 +11,78 @@
 
 ## Where things stand (v0.2)
 
-**Phase 1 is done** (see below): the calibrated market, the exact objective, the
-TWAP-relative action, the cleaner observation and the null baselines are in, pinned by
-tests. The agents' *training setup* has not changed yet: a short PPO run with the old
-settings still ends up worse than TWAP, its own starting point. That is Phase 2.
+**All five phases are done.** The full results, with tables, figures and how to re-check
+them, are in [RESULTS.md](RESULTS.md); this page keeps the plan and a summary of what each
+phase found.
+Phase 1 brought the calibrated market, the exact
+objective, the TWAP-relative action, the cleaner observation and the null baselines.
+Phase 2 brought vectorised PPO, DoubleDQN fixes, O(1) rewards and checkpoint selection on
+validation seeds. First evidence that training now works, on the signal-free
+`abm_ac_optimal` regime with the default 2M-step budget: four PPO runs reached a validation
+objective of 29.1–29.6 bps against 28.9 for the Almgren-Chriss optimum and 32.8 for TWAP
+(their untrained starting point), closing 82–95% of the gap. DoubleDQN first did
+not learn at all: the value gaps between neighbouring trade sizes are tiny next to the
+reward noise, so its greedy action flipped with estimation error. A dueling head, batch
+1024 and a learning rate of 5e-5 fixed that. Two 2M-step seeds kept checkpoints at 29.7 bps
+(untrained: 45.9 and 187.7), and most checkpoints after 300k sit below TWAP. It is noisier
+than PPO, front-loads more than AC, and takes ~27 minutes per seed.
+
+**E1 result** (ten seeds per agent, 2M steps each, scored on 5,000 test episodes the agents
+never saw; AC 28.87 bps, TWAP 32.83). PPO ends up **0.47 bps** above the Almgren-Chriss
+optimum (95% CI 0.23–0.79 across seeds). That is inside the 0.5 bps tolerance but still
+measurably worse than AC. Its average schedule has the right front-loaded shape but is
+flatter than AC's, at a median L1 distance of 0.125 against a 0.10 bar. By the criteria
+fixed in advance that reads as *directionally right, under-tuned*. Four of the ten seeds do
+clear 0.10, and they are the cheapest ones. DoubleDQN ends up **1.73 bps** off (1.52–1.96,
+median L1 0.197), so it fails the cost criterion. Its greedy action reacts to noise in the
+observation, so its schedule changes from episode to episode in a market where nothing is
+predictable; uneven trade sizes cost more under impact that grows faster than the trade.
+No seed of either agent collapsed to a block trade. Running the evaluation also exposed
+a bug: `rlx evaluate` gave DoubleDQN the continuous action space, which made it look
+exactly like dumping the order at once. That's fixed, and a mismatch now raises an error.
+
+**A longer budget helps (exploratory, not part of the pre-registered E1).** Retrained for
+5M steps, the same ten PPO seeds come within **0.20 bps** of AC (0.07–0.35), and eight of
+the ten clear the 0.10 schedule bar. Every seed improves, most of all those that were worst
+at 2M. A 2M run that follows the 5M learning-rate schedule recovers less than half of that
+gain, so it is the extra training steps, not the slower decay. E2 and E3 therefore train
+PPO for 5M steps.
+
+**E3 result** (one PPO policy trained on a randomised family of markets, ten seeds; scored
+on 3 regimes inside that family and 9 outside it). Measured as the gap to Almgren-Chriss
+in each regime, PPO gets **5.5 bps** worse out of distribution (95% CI 5.0–6.0), against
+6.2 for TWAP. The average hides two regimes. At twice the training volatility every seed is
+20–37 bps worse than AC, because the policy keeps its usual pace where AC speeds up sharply;
+the volatility is outside anything it was trained on, and it does not extrapolate. In the
+mean-reverting market, which the family does include, every seed beats AC by 3–6 bps,
+because it learned the reversion AC ignores. Without those two regimes the degradation is
+0.8 bps (0.7–1.1) against 0.3 for TWAP. A per-regime refit of the two-line `SignalRule`
+beats the single PPO policy in most regimes; that rule is told each regime's parameters,
+so E2 is where the value of the signal is measured cleanly.
+
+**E2 result** (the E1 market with its order-book signal switched on at five strengths; ten
+PPO seeds each, plus DoubleDQN at IC 0.05). PPO's saving over Almgren-Chriss grows with the
+signal, by about 3.6 bps per 0.05 of IC across all 50 seeds. It grows roughly with the
+square of the IC: +2.95 bps at IC 0.10, +13.4 at 0.20. With no signal PPO is still 0.2 bps
+*worse* than AC (0.07–0.35), so the check written for this point ("the CI covers zero")
+fails as stated, but on the expensive side. There is no sign of a simulator exploit. The
+honest headline is the comparison with the two-line `SignalRule`, fitted on validation
+seeds. At realistic signal strengths (IC 0.05–0.10), PPO is up to 0.5 bps worse than it at
+IC 0.05 and level with it at 0.10. It only pulls ahead at IC 0.20 (+0.97 bps, 0.74–1.17),
+two to four times stronger than real order-book signals. DoubleDQN trails both. So a
+learned policy recovers the value of a realistic signal about as well as a tuned linear
+rule, and does better only when the signal is strong.
+
+**Phase 4 result** (the GPU path, run on a lab machine with an RTX 4000 Ada). The batched
+environment matches the numpy one to 1e-12 in float64 on the GPU too, and runs at ~29M env
+steps/s. VecPPO, 10 seeds × 5M steps, ends +0.23 bps from the optimum (0.10–0.38) against
+SB3's +0.20: the pre-registered parity check passes. A tuning study then compared four
+configurations on a tuning block disjoint from the test seeds. The winner, 16× more
+environments per rollout (4,096) for 50M steps, ends **+0.09 bps** from the optimum
+(0.05–0.12) with every seed under 0.2 bps. Rerun with it, E2 keeps its conclusion: at IC
+0.025–0.05 the learned policy still trails `SignalRule` (by 0.15 and 0.34 bps), and it now
+pulls ahead from IC 0.10 (+0.43). Both are exploratory and reported next to the
+pre-registered results, not in their place.
 
 The lean core is done: Brownian-only market dynamics, PPO and DQN / Double DQN, one
 `rlx train | evaluate | report` command line, and run folders whose weights are pinned by a
@@ -98,8 +166,9 @@ them.
 
 ## Phase 2: train properly
 
-- PPO with 8–16 vectorised envs, γ = 1, a hand-scaled observation and reward, 2–5M steps per
-  seed. DoubleDQN with γ = 1, Polyak target updates and 1–2M steps.
+- PPO with 16 vectorised envs in one process, γ = 1, a hand-scaled observation and reward,
+  2M steps per seed (~5 minutes on one core). DoubleDQN with γ = 1, Polyak target updates,
+  a dueling head, batch 1024 and learning rate 5e-5 (~27 minutes per 2M-step seed).
 - **Ten training seeds** per configuration; the training seed is the unit of analysis.
 - **Three disjoint seed blocks**: training, validation (checkpoint selection), and test
   (touched only by `rlx evaluate`).
@@ -111,7 +180,7 @@ them.
 | exp | market | question |
 |---|---|---|
 | **E1** ground truth | arithmetic BM, no signal, constant volatility | Does the learner recover the Almgren-Chriss optimum? |
-| **E2** signal sweep | IC ∈ {0, 0.025, 0.05, 0.10, 0.20} | How does the edge over AC and over a two-line rule scale with signal strength? |
+| **E2** signal sweep | the E1 market with its order-book signal switched on, IC ∈ {0, 0.025, 0.05, 0.10, 0.20} | How does the edge over AC and over a two-line rule scale with signal strength? |
 | **E3** robustness | train on a randomised family; test in- and out-of-distribution (2× vol, 2× impact, GBM, clustered vol, leverage) | How much does performance degrade off-distribution? |
 
 | check | pass |
@@ -124,26 +193,38 @@ them.
 ## Phase 4: GPU-batched environment
 
 Because the whole exogenous market is drawn at reset and impact is an additive overlay, a
-step reduces to a few tensor operations. Planned:
+step reduces to a few tensor operations.
 
-- a batched PyTorch environment that steps thousands of episodes at once on a GPU;
-- a compact PPO trained on it;
-- three parity tests against the NumPy reference environment:
-  - identical fills, rewards and observations given the same paths;
-  - matching path statistics;
-  - the GPU PPO reproducing the E1 result;
-- a throughput benchmark. The target is ≥ 1M environment steps per second.
+**Done** (run on a lab GPU with `scripts/lab/`; results above and in
+[RESULTS.md](RESULTS.md#phase-4-a-gpu-environment-that-gives-the-same-answers)):
 
-Reported numbers keep coming from the reference environment; the GPU path makes E2's sweep
-cheap.
+- `BatchedExecutionEnv` steps thousands of episodes at once as tensor operations, with one
+  market per episode, so a batch can also cover the randomised family.
+- `vecppo`: a compact PPO on it whose defaults mirror the SB3 runs. It selects checkpoints
+  on the numpy simulator's own validation episodes, replayed in one batch, and its actors
+  are scored on the numpy environment, so every reported number still comes from the
+  reference environment.
+- Parity tests 1 and 2 pass on the CPU:
+  - On identical markets the batched environment reproduces the numpy one exactly in
+    float64 (rewards to 1e-14, episode objectives to 1e-12, across eight regimes, both
+    sides and both action types). In float32, the training precision, it stays within
+    1e-3 bps.
+  - Markets drawn in torch match the numpy simulator's statistics (return moments, signal
+    IC, volatility clustering, book inputs).
+- Throughput on a laptop CPU: ~0.9M environment steps/s at 16k episodes per batch, against
+  ~5k for the numpy environment.
+- Parity test 3, fixed before the GPU run: across 10 seeds at 5M steps, VecPPO's gap to
+  Almgren-Chriss must be within ±0.30 bps of SB3's +0.20, with median schedule L1 under
+  0.10 and no degenerate seed. **Passed** (+0.23, L1 0.074, none degenerate). The
+  throughput target, ≥ 1M environment steps per second on one GPU, **passed** at ~29M.
 
 ## Phase 5: results and write-up
 
-Tables with mean, spread, tail (CVaR95) and the paired gap to AC with confidence intervals;
-schedule-vs-AC, cost-vs-risk, improvement-vs-signal and throughput figures; a short "what
-went wrong in v0.1" section. The curated results and the small weight files will be
-committed with their hashes, plus a script that re-evaluates them and checks the published
-table.
+**Done: [RESULTS.md](RESULTS.md).** Tables with mean, spread, tail (CVaR95) and the paired gap
+to AC with confidence intervals; schedule-vs-AC, cost-vs-risk, improvement-vs-signal,
+robustness and throughput figures; a "what went wrong in v0.1" section. The weights of every
+reported run (~16 MB) and the evaluation tables are committed with their hashes, and
+`scripts/reproduce.py` re-scores them and checks the tables to 1e-3 bps.
 
 ## Out of scope for now
 

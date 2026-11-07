@@ -1,0 +1,23 @@
+{
+  "git_sha": "20f2f4ac668cf61527dcddc40fbb656fc4bed231",
+  "git_dirty": false,
+  "config_hash": "887b5a4e141093eb3c18b0919b9bf80e7d9062bba7b93e1690428a9e5e42000d",
+  "seed": 0,
+  "lib_versions": {
+    "numpy": "2.5.4",
+    "pandas": "3.1.0",
+    "scipy": "1.18.1",
+    "gymnasium": "1.4.0",
+    "torch": "2.15.0",
+    "stable-baselines3": "2.9.2"
+  },
+  "python": "3.12.3",
+  "platform": "Linux-6.17.0-1033-oem-x86_64-with-glibc2.39",
+  "created_at": "2026-10-30T09:46:59.764662+00:00",
+  "model_file": "model.pt",
+  "weights_sha256": "b9b13badf37b7b518342193c1436be14ea5aed4922ba4c5fe53879b3223cec1d",
+  "selected_step": 50041991,
+  "selected_val_objective_bps": 28.449060440063477,
+  "initial_val_objective_bps": 32.856937408447266,
+  "final_val_objective_bps": 28.449060440063477
+}
