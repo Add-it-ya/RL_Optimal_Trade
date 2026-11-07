@@ -9,7 +9,7 @@ description = "Reinforcement learning for optimal trade execution on a Brownian 
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "RL Execution Team" }]
+authors = [{ name = "Aditya Raj" }]
 dependencies = [
     "numpy>=1.24",
     "pandas>=2.0",
@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-rl = ["torch>=2.0", "stable-baselines3>=2.2.1", "tensorboard>=2.13"]
+rl = ["torch>=2.0", "stable-baselines3>=2.2.1"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
