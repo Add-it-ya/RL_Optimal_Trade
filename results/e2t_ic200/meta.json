@@ -1,0 +1,96 @@
+{
+  "experiment": "e2t_ic200",
+  "runs_dir": "runs/e2t_ic200",
+  "trained_on": [
+    "signal_ic200"
+  ],
+  "regimes": [
+    "signal_ic200"
+  ],
+  "episodes": 5000,
+  "base_seed": 2000000,
+  "antithetic": true,
+  "runs": [
+    {
+      "strategy": "VecPPO/s0",
+      "run_dir": "runs/e2t_ic200/VecPPO/seed_0",
+      "git_sha": "20f2f4ac668cf61527dcddc40fbb656fc4bed231",
+      "git_dirty": false,
+      "weights_sha256": "5623a2b86fc8e32e3afd9b8dbfae77ab05ff2be1becf7a785b456cef06f7f68c"
+    },
+    {
+      "strategy": "VecPPO/s1",
+      "run_dir": "runs/e2t_ic200/VecPPO/seed_1",
+      "git_sha": "20f2f4ac668cf61527dcddc40fbb656fc4bed231",
+      "git_dirty": false,
+      "weights_sha256": "41cb72ac42c5b8da1a8b1f7a1c96e471fd337381f8f15cbb6f1b9681e6ccf4d5"
+    },
+    {
+      "strategy": "VecPPO/s2",
+      "run_dir": "runs/e2t_ic200/VecPPO/seed_2",
+      "git_sha": "20f2f4ac668cf61527dcddc40fbb656fc4bed231",
+      "git_dirty": false,
+      "weights_sha256": "fb83a1568b800e45968f938b8a3c1caaac927c91978e1bce5253e1cd4ddb9f8d"
+    },
+    {
+      "strategy": "VecPPO/s3",
+      "run_dir": "runs/e2t_ic200/VecPPO/seed_3",
+      "git_sha": "20f2f4ac668cf61527dcddc40fbb656fc4bed231",
+      "git_dirty": false,
+      "weights_sha256": "bcc8488621eb42d83500c7aa79050482558037ef9c4c6f9366e7409d135358b4"
+    },
+    {
+      "strategy": "VecPPO/s4",
+      "run_dir": "runs/e2t_ic200/VecPPO/seed_4",
+      "git_sha": "20f2f4ac668cf61527dcddc40fbb656fc4bed231",
+      "git_dirty": false,
+      "weights_sha256": "cd3d365b30b51ae0265688f3a60fcbde88f9ca45481db0c0d6868b7de84e1ad0"
+    },
+    {
+      "strategy": "VecPPO/s5",
+      "run_dir": "runs/e2t_ic200/VecPPO/seed_5",
+      "git_sha": "20f2f4ac668cf61527dcddc40fbb656fc4bed231",
+      "git_dirty": false,
+      "weights_sha256": "564e4ce02f9f62fde0f1f4ac5c8c552d62ef051713082d0a0e8e9ee11b6a8576"
+    },
+    {
+      "strategy": "VecPPO/s6",
+      "run_dir": "runs/e2t_ic200/VecPPO/seed_6",
+      "git_sha": "20f2f4ac668cf61527dcddc40fbb656fc4bed231",
+      "git_dirty": false,
+      "weights_sha256": "3419e446f5f05e88d518c17dd003ce75c16bc96a064e1d5be72eacc63bd4de4f"
+    },
+    {
+      "strategy": "VecPPO/s7",
+      "run_dir": "runs/e2t_ic200/VecPPO/seed_7",
+      "git_sha": "20f2f4ac668cf61527dcddc40fbb656fc4bed231",
+      "git_dirty": false,
+      "weights_sha256": "5937e4e2c2bcad5304f3347354db92c1e45b1aa301142ec4c7d95ee1b79f8363"
+    },
+    {
+      "strategy": "VecPPO/s8",
+      "run_dir": "runs/e2t_ic200/VecPPO/seed_8",
+      "git_sha": "20f2f4ac668cf61527dcddc40fbb656fc4bed231",
+      "git_dirty": false,
+      "weights_sha256": "a313554918b2b1182f2e8ae6ddd238d8c4f712da478f72e0d363557ea276e7ed"
+    },
+    {
+      "strategy": "VecPPO/s9",
+      "run_dir": "runs/e2t_ic200/VecPPO/seed_9",
+      "git_sha": "20f2f4ac668cf61527dcddc40fbb656fc4bed231",
+      "git_dirty": false,
+      "weights_sha256": "b1ea3cbdbc42698756b77bce825e9c19c895b136c2aff7ae91fc5dae61e49bb7"
+    }
+  ],
+  "params": {
+    "signal_ic200": {
+      "AlmgrenChriss": {
+        "risk_aversion": "matched"
+      },
+      "SignalRule": {
+        "risk_aversion": "matched",
+        "beta": 2.0
+      }
+    }
+  }
+}

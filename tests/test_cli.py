@@ -11,6 +11,7 @@ from rl_execution.cli import (
     comparison_table,
     main,
     parse_seeds,
+    per_seed_table,
     schedule_l1,
     signal_sweep_table,
     split_degradation,
@@ -67,6 +68,36 @@ def test_comparison_table_pairs_episodes_and_aggregates_seeds():
     assert table.loc["PPO", "n_degenerate"] == 0  # no effective_steps column -> not flagged
     assert np.isnan(table.loc["TWAP", "p_value"])
     assert np.isnan(table.loc["PPO", "L1_vs_AC"])  # no schedules given
+    worst = np.sort(market)[-3:]  # 50 episodes: the 95th percentile leaves the top 3
+    assert table.loc["TWAP", "IS_cvar95"] == pytest.approx(worst.mean())
+    assert table.loc["TWAP", "IS_cvar95"] >= table.loc["TWAP", "IS_p95"]
+
+    seeds = per_seed_table(
+        pd.DataFrame(rows), benchmark="TWAP", metric="implementation_shortfall_bps"
+    ).set_index("strategy")
+    assert list(seeds.index) == ["PPO/s0", "PPO/s1"]  # baselines are left out
+    assert seeds["vs_TWAP"].to_list() == pytest.approx([-5.0, -7.0])
+    assert seeds["vs_TWAP"].mean() == pytest.approx(table.loc["PPO", "vs_TWAP"])
+
+
+@pytest.mark.parametrize(
+    "recorded",
+    [
+        "/home/someone/clone/runs/t/PPO/seed_3",
+        "C:\\Users\\someone\\clone\\runs\\t\\PPO\\seed_3",
+        "runs/t/PPO/seed_3",
+    ],
+)
+def test_resolve_run_dir_finds_runs_recorded_on_another_machine(tmp_path, recorded):
+    from rl_execution.utils.io import resolve_run_dir
+
+    assert resolve_run_dir(recorded, tmp_path) == tmp_path / "t" / "PPO" / "seed_3"
+
+
+def test_portable_path_is_relative_inside_the_project():
+    from rl_execution.utils.io import PROJECT_ROOT, portable_path
+
+    assert portable_path(PROJECT_ROOT / "runs" / "e1" / "PPO" / "seed_0") == "runs/e1/PPO/seed_0"
 
 
 def test_comparison_table_reports_float_noise_as_an_exact_tie():
@@ -237,7 +268,16 @@ def test_train_evaluate_report_end_to_end(tmp_path):
     assert "SignalRule coefficient fitted on validation seeds" in report
     assert "## Checkpoint selection" in report and "n_degenerate" in report
     assert "code version(s): " in report
+    assert "IS_cvar95" in report
     assert (results / "figures" / "validation_curves.png").exists()
+
+    # the report still finds the run folders after they move (another machine or checkout)
+    runs.rename(tmp_path / "moved")
+    main(
+        ["report", "--experiment", "t", "--results", str(results)]
+        + ["--runs-dir", str(tmp_path / "moved")]
+    )
+    assert "## Checkpoint selection" in (results / "REPORT.md").read_text(encoding="utf-8")
 
 
 def _sweep_episodes(regime, ppo_shifts, signal_rule_shift, n=30, seed=0):

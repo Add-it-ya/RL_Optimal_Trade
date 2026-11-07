@@ -11,7 +11,9 @@
 
 ## Where things stand (v0.2)
 
-**Phases 1, 2 and 3 are done**: all three experiments have run (see below).
+**All five phases are done.** The full results, with tables, figures and how to re-check
+them, are in [RESULTS.md](RESULTS.md); this page keeps the plan and a summary of what each
+phase found.
 Phase 1 brought the calibrated market, the exact
 objective, the TWAP-relative action, the cleaner observation and the null baselines.
 Phase 2 brought vectorised PPO, DoubleDQN fixes, O(1) rewards and checkpoint selection on
@@ -70,6 +72,17 @@ IC 0.05 and level with it at 0.10. It only pulls ahead at IC 0.20 (+0.97 bps, 0.
 two to four times stronger than real order-book signals. DoubleDQN trails both. So a
 learned policy recovers the value of a realistic signal about as well as a tuned linear
 rule, and does better only when the signal is strong.
+
+**Phase 4 result** (the GPU path, run on a lab machine with an RTX 4000 Ada). The batched
+environment matches the numpy one to 1e-12 in float64 on the GPU too, and runs at ~29M env
+steps/s. VecPPO, 10 seeds × 5M steps, ends +0.23 bps from the optimum (0.10–0.38) against
+SB3's +0.20: the pre-registered parity check passes. A tuning study then compared four
+configurations on a tuning block disjoint from the test seeds. The winner, 16× more
+environments per rollout (4,096) for 50M steps, ends **+0.09 bps** from the optimum
+(0.05–0.12) with every seed under 0.2 bps. Rerun with it, E2 keeps its conclusion: at IC
+0.025–0.05 the learned policy still trails `SignalRule` (by 0.15 and 0.34 bps), and it now
+pulls ahead from IC 0.10 (+0.43). Both are exploratory and reported next to the
+pre-registered results, not in their place.
 
 The lean core is done: Brownian-only market dynamics, PPO and DQN / Double DQN, one
 `rlx train | evaluate | report` command line, and run folders whose weights are pinned by a
@@ -182,8 +195,8 @@ them.
 Because the whole exogenous market is drawn at reset and impact is an additive overlay, a
 step reduces to a few tensor operations.
 
-**Built and tested on the CPU; the GPU run is next, on a lab machine** (branch
-`phase-4-gpu`, instructions in `scripts/lab/README.md`):
+**Done** (run on a lab GPU with `scripts/lab/`; results above and in
+[RESULTS.md](RESULTS.md#phase-4-a-gpu-environment-that-gives-the-same-answers)):
 
 - `BatchedExecutionEnv` steps thousands of episodes at once as tensor operations, with one
   market per episode, so a batch can also cover the randomised family.
@@ -202,16 +215,16 @@ step reduces to a few tensor operations.
   ~5k for the numpy environment.
 - Parity test 3, fixed before the GPU run: across 10 seeds at 5M steps, VecPPO's gap to
   Almgren-Chriss must be within ±0.30 bps of SB3's +0.20, with median schedule L1 under
-  0.10 and no degenerate seed. The throughput target is ≥ 1M environment steps per second
-  on one GPU.
+  0.10 and no degenerate seed. **Passed** (+0.23, L1 0.074, none degenerate). The
+  throughput target, ≥ 1M environment steps per second on one GPU, **passed** at ~29M.
 
 ## Phase 5: results and write-up
 
-Tables with mean, spread, tail (CVaR95) and the paired gap to AC with confidence intervals;
-schedule-vs-AC, cost-vs-risk, improvement-vs-signal and throughput figures; a short "what
-went wrong in v0.1" section. The curated results and the small weight files will be
-committed with their hashes, plus a script that re-evaluates them and checks the published
-table.
+**Done: [RESULTS.md](RESULTS.md).** Tables with mean, spread, tail (CVaR95) and the paired gap
+to AC with confidence intervals; schedule-vs-AC, cost-vs-risk, improvement-vs-signal,
+robustness and throughput figures; a "what went wrong in v0.1" section. The weights of every
+reported run (~16 MB) and the evaluation tables are committed with their hashes, and
+`scripts/reproduce.py` re-scores them and checks the tables to 1e-3 bps.
 
 ## Out of scope for now
 

@@ -1,0 +1,206 @@
+{
+  "experiment": "e3",
+  "runs_dir": "runs/e3",
+  "trained_on": [
+    "randomized"
+  ],
+  "regimes": [
+    "normal_liquidity",
+    "medium_vol",
+    "sideways",
+    "low_vol",
+    "high_vol",
+    "thin",
+    "deep",
+    "bull",
+    "bear",
+    "gbm_medium",
+    "clustered_vol",
+    "leverage"
+  ],
+  "episodes": 5000,
+  "base_seed": 2000000,
+  "antithetic": true,
+  "runs": [
+    {
+      "strategy": "PPO/s0",
+      "run_dir": "runs/e3/PPO/seed_0",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "4b6eecdb503372e1e5701cd5d08c97af5dd8c57884114e7c6d47f8853917fab6"
+    },
+    {
+      "strategy": "PPO/s1",
+      "run_dir": "runs/e3/PPO/seed_1",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "84aba30db119304f918e297ea72676ad3aafb8341e6089db55452a9f11b7112e"
+    },
+    {
+      "strategy": "PPO/s2",
+      "run_dir": "runs/e3/PPO/seed_2",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "3892170e547eb263b90a702aee36740ed777b5d290ef7ab083f14a32d3bd85cc"
+    },
+    {
+      "strategy": "PPO/s3",
+      "run_dir": "runs/e3/PPO/seed_3",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "4e861e95546e213db277e216f99bd8b89b6eadfe7a8bdc0fe27fde2c073b94dd"
+    },
+    {
+      "strategy": "PPO/s4",
+      "run_dir": "runs/e3/PPO/seed_4",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "8c29407d9708355763f60a09c15426565562ee5a7aa1b36e8583a1adfa70bc9a"
+    },
+    {
+      "strategy": "PPO/s5",
+      "run_dir": "runs/e3/PPO/seed_5",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "001546c4f7b68736ee65509d0e8218e1db951bbbff30ee33f34a1d9022c5f33b"
+    },
+    {
+      "strategy": "PPO/s6",
+      "run_dir": "runs/e3/PPO/seed_6",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "144dd405e1c5e376a102991699f6e4886592232798eef51c28d444611e5b195a"
+    },
+    {
+      "strategy": "PPO/s7",
+      "run_dir": "runs/e3/PPO/seed_7",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "2dcb476bf77ae42f5bf100a99e0847f418c9aa5f418a6bf6a1fb9aeebd6f1434"
+    },
+    {
+      "strategy": "PPO/s8",
+      "run_dir": "runs/e3/PPO/seed_8",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "93c6fae9b59a1ef617779e53bdebcfcda1054825006a7379decf1e7509a08237"
+    },
+    {
+      "strategy": "PPO/s9",
+      "run_dir": "runs/e3/PPO/seed_9",
+      "git_sha": "f8efbd7fdacbdd36909bdf2dea677f0fc6da8fa3",
+      "git_dirty": false,
+      "weights_sha256": "370f62ff6a241b7c2750777b2a8de0c1de8d2f18e55f00e0a2a9e9b010ac5384"
+    }
+  ],
+  "params": {
+    "normal_liquidity": {
+      "AlmgrenChriss": {
+        "risk_aversion": "matched"
+      },
+      "SignalRule": {
+        "risk_aversion": "matched",
+        "beta": 1.0
+      }
+    },
+    "medium_vol": {
+      "AlmgrenChriss": {
+        "risk_aversion": "matched"
+      },
+      "SignalRule": {
+        "risk_aversion": "matched",
+        "beta": 1.0
+      }
+    },
+    "sideways": {
+      "AlmgrenChriss": {
+        "risk_aversion": "matched"
+      },
+      "SignalRule": {
+        "risk_aversion": "matched",
+        "beta": 1.0
+      }
+    },
+    "low_vol": {
+      "AlmgrenChriss": {
+        "risk_aversion": "matched"
+      },
+      "SignalRule": {
+        "risk_aversion": "matched",
+        "beta": 1.0
+      }
+    },
+    "high_vol": {
+      "AlmgrenChriss": {
+        "risk_aversion": "matched"
+      },
+      "SignalRule": {
+        "risk_aversion": "matched",
+        "beta": 0.0
+      }
+    },
+    "thin": {
+      "AlmgrenChriss": {
+        "risk_aversion": "matched"
+      },
+      "SignalRule": {
+        "risk_aversion": "matched",
+        "beta": 1.0
+      }
+    },
+    "deep": {
+      "AlmgrenChriss": {
+        "risk_aversion": "matched"
+      },
+      "SignalRule": {
+        "risk_aversion": "matched",
+        "beta": 2.0
+      }
+    },
+    "bull": {
+      "AlmgrenChriss": {
+        "risk_aversion": "matched"
+      },
+      "SignalRule": {
+        "risk_aversion": "matched",
+        "beta": 1.0
+      }
+    },
+    "bear": {
+      "AlmgrenChriss": {
+        "risk_aversion": "matched"
+      },
+      "SignalRule": {
+        "risk_aversion": "matched",
+        "beta": 1.0
+      }
+    },
+    "gbm_medium": {
+      "AlmgrenChriss": {
+        "risk_aversion": "matched"
+      },
+      "SignalRule": {
+        "risk_aversion": "matched",
+        "beta": 1.0
+      }
+    },
+    "clustered_vol": {
+      "AlmgrenChriss": {
+        "risk_aversion": "matched"
+      },
+      "SignalRule": {
+        "risk_aversion": "matched",
+        "beta": 1.0
+      }
+    },
+    "leverage": {
+      "AlmgrenChriss": {
+        "risk_aversion": "matched"
+      },
+      "SignalRule": {
+        "risk_aversion": "matched",
+        "beta": 0.5
+      }
+    }
+  }
+}

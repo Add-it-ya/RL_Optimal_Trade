@@ -6,6 +6,27 @@ All notable changes to this project are documented in this file. The format is b
 
 ## [Unreleased]
 
+### Added: results and write-up (roadmap Phase 5)
+- **`RESULTS.md`**: E1, E2, E3 and the GPU path, with tables (objective, mean / sd / CVaR95
+  of implementation shortfall, effective steps, schedule distance, paired gap to
+  Almgren-Chriss with CIs across training seeds), figures in light and dark, the verdicts
+  against the pre-registered criteria, the GPU tuning study, and what went wrong in v0.1.
+- **The runs and evaluations behind it are committed**: config, weights, provenance and
+  validation curve of every reported run (~16 MB, no training logs), and each evaluation's
+  report and tables (no per-episode CSVs). `.gitignore` allow-lists them by name; everything
+  else under `runs/` and `results/` stays ignored.
+- **`scripts/reproduce.py`**: re-runs each committed evaluation from its `meta.json`
+  (verifying every weight hash on load), rebuilds both E2 sweeps, and compares the tables
+  with the committed ones to 1e-3 bps. `--quick` checks E1 and the tuned VecPPO.
+- **`scripts/make_figures.py`**: the `RESULTS.md` figures from the committed tables, plus the
+  Almgren-Chriss cost-risk frontier on the E1 test block (`results/frontier/`).
+- `rlx report` adds `IS_cvar95` (mean of the worst 5% of implementation shortfall) and writes
+  `per_seed.csv`, the per-seed gaps behind each mean and CI.
+
+### Changed
+- `meta.json` records run folders relative to the project, so results move between machines
+  and checkouts; `rlx report --runs-dir` finds run folders recorded elsewhere.
+
 ### Added: the GPU path (roadmap Phase 4)
 - **`rl_execution/vec/torch_env.py`**: `BatchedExecutionEnv` steps `N` episodes in
   lockstep as tensor operations on a CPU or a GPU. It has the same book, fills, impact,

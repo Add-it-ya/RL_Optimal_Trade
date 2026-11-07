@@ -45,7 +45,15 @@ from rl_execution.agents import (
 )
 from rl_execution.config import ActionType, ExecutionConfig, RunConfig, Side
 from rl_execution.utils.config_io import load_run_config
-from rl_execution.utils.io import RESULTS_DIR, RUNS_DIR, ensure_dir, load_json, save_json
+from rl_execution.utils.io import (
+    RESULTS_DIR,
+    RUNS_DIR,
+    ensure_dir,
+    load_json,
+    portable_path,
+    resolve_run_dir,
+    save_json,
+)
 from rl_execution.utils.warnings import configure_cli_warnings
 
 #: First seed of the test block.  Training resets draw from the env's own seeded RNG, so
@@ -152,7 +160,7 @@ def _load_runs(runs_root: Path):
         meta.append(
             {
                 "strategy": name,
-                "run_dir": str(d),
+                "run_dir": portable_path(d),
                 "git_sha": prov.get("git_sha"),
                 "git_dirty": prov.get("git_dirty"),
                 "weights_sha256": prov.get("weights_sha256"),
@@ -367,7 +375,7 @@ def cmd_evaluate(args) -> None:
     save_json(
         {
             "experiment": args.experiment,
-            "runs_dir": str(runs_root),
+            "runs_dir": portable_path(runs_root),
             "trained_on": sorted("randomized" if r is None else r for r in trained_on),
             "regimes": regimes,
             "episodes": args.episodes,
@@ -428,6 +436,13 @@ def comparison_table(
     nan = float("nan")
     l1 = schedule_l1(schedules) if schedules is not None else {}
 
+    def cvar(values: np.ndarray, level: float) -> float:
+        """Mean of the worst ``1 - level`` of outcomes (costs: the upper tail)."""
+        v = values[~np.isnan(values)]
+        if v.size == 0:
+            return nan
+        return float(v[v >= np.quantile(v, level)].mean())
+
     def column(frame: pd.DataFrame, name: str) -> np.ndarray:
         if name not in frame:
             return np.full(len(frame), nan)
@@ -465,6 +480,7 @@ def comparison_table(
                 "IS_bps": float(is_bps.mean()),
                 "IS_std": float(is_bps.std(ddof=1)) if is_bps.size > 1 else nan,
                 "IS_p95": float(np.quantile(is_bps, 0.95)),
+                "IS_cvar95": cvar(is_bps, 0.95),
                 "eff_steps": float(np.mean(column(grp, "effective_steps"))),
                 "L1_vs_AC": (
                     float(np.nanmedian(per_seed_l1)) if not np.all(np.isnan(per_seed_l1)) else nan
@@ -498,6 +514,50 @@ def comparison_table(
         _, p_adj = adjust_pvalues(table.loc[tested, "p_value"].to_numpy(), method="holm")
         table.loc[tested, "p_holm"] = p_adj
     return table
+
+
+def per_seed_table(
+    episodes: pd.DataFrame,
+    benchmark: str = "AlmgrenChriss",
+    metric: str = "objective_bps",
+    schedules: Optional[pd.DataFrame] = None,
+) -> pd.DataFrame:
+    """One row per trained run and regime: what that seed contributes to the comparison.
+
+    ``vs_<benchmark>`` is the run's mean paired gap in ``metric`` (the per-seed values whose
+    mean and CI :func:`comparison_table` reports), with its objective, schedule distance
+    from Almgren-Chriss and effective steps. Baselines (no seed) are left out.
+    """
+    nan = float("nan")
+    l1 = schedule_l1(schedules) if schedules is not None else {}
+    rows = []
+    for regime, reg in episodes.groupby("regime", sort=False):
+        bench = reg[reg["strategy"] == benchmark]
+        if bench.empty:
+            continue
+        b = bench.sort_values("episode")[metric].to_numpy(dtype=float)
+        for name, run in reg.groupby("strategy", sort=False):
+            if not run["seed"].notna().any():
+                continue
+            run = run.sort_values("episode")
+            m = run[metric].to_numpy(dtype=float)
+            n = min(m.size, b.size)
+            rows.append(
+                {
+                    "regime": regime,
+                    "strategy": name,
+                    "agent": run["agent"].iloc[0],
+                    "seed": int(run["seed"].iloc[0]),
+                    "J_bps": float(run["objective_bps"].mean()) if "objective_bps" in run else nan,
+                    f"vs_{benchmark}": float(np.mean(m[:n] - b[:n])),
+                    "L1_vs_AC": l1.get((str(regime), str(name)), nan),
+                    "eff_steps": (
+                        float(run["effective_steps"].mean()) if "effective_steps" in run else nan
+                    ),
+                }
+            )
+    columns = ["regime", "strategy", "agent", "seed", "J_bps", f"vs_{benchmark}"]
+    return pd.DataFrame(rows, columns=columns + ["L1_vs_AC", "eff_steps"])
 
 
 def split_degradation(
@@ -599,6 +659,9 @@ def cmd_report(args) -> None:
         episodes, benchmark=args.benchmark, metric=args.metric, block=block, schedules=schedules
     )
     table.to_csv(res_dir / "comparison.csv", index=False)
+    per_seed_table(episodes, args.benchmark, args.metric, schedules).to_csv(
+        res_dir / "per_seed.csv", index=False
+    )
     randomized = meta.get("trained_on") == ["randomized"]
     robustness = (
         split_degradation(episodes, SPLITS, benchmark=args.benchmark, metric=args.metric)
@@ -609,7 +672,7 @@ def cmd_report(args) -> None:
     # validation curves and the checkpoint each run kept (validation seeds, not test seeds)
     curves, selection = {}, []
     for run in meta.get("runs", []):
-        run_path = Path(run["run_dir"])
+        run_path = resolve_run_dir(run["run_dir"], args.runs_dir)
         if (run_path / "val_curve.csv").exists():
             curves[run["strategy"]] = pd.read_csv(run_path / "val_curve.csv")
         prov = load_json(run_path / "provenance.json") if run_path.exists() else {}
@@ -639,7 +702,9 @@ def cmd_report(args) -> None:
         + (f" ({n_dirty} trained with uncommitted changes)" if n_dirty else ""),
         "- `J_bps` is the objective the agents are rewarded on: implementation shortfall plus "
         "the Almgren-Chriss penalty on carried variance (lower is better). `eff_steps` is how "
-        "many steps the order is effectively spread over (20 = TWAP, 1 = one block trade).",
+        "many steps the order is effectively spread over (20 = TWAP, 1 = one block trade). "
+        "`IS_p95` and `IS_cvar95` are the 95th percentile of implementation shortfall and the "
+        "mean of its worst 5% (bps).",
         "- `L1_vs_AC` is the L1 distance between the strategy's mean schedule (fraction of the "
         "order traded at each step) and Almgren-Chriss's: 0 = the same shape, 2 = disjoint. "
         "For multi-seed agents it is the median across seeds.",
@@ -652,7 +717,7 @@ def cmd_report(args) -> None:
         "",
     ]
     cols = ["strategy", "n_seeds", "n_degenerate", "J_bps", "IS_bps", "IS_std", "IS_p95"]
-    cols += ["eff_steps", "L1_vs_AC"]
+    cols += ["IS_cvar95", "eff_steps", "L1_vs_AC"]
     cols += [f"vs_{args.benchmark}", "ci_low", "ci_high", "p_holm"]
     # E1 is judged on sub-bps gaps and an L1 bar of 0.10: print enough digits to read them
     precise = {c: 2 for c in ("J_bps", f"vs_{args.benchmark}", "ci_low", "ci_high")}
@@ -858,6 +923,11 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("report", help="aggregate evaluation results into REPORT.md")
     r.add_argument("--experiment", required=True)
     r.add_argument("--results", default=None, help="default: results/<experiment>")
+    r.add_argument(
+        "--runs-dir",
+        default=str(RUNS_DIR),
+        help="where to look up run folders recorded on another machine",
+    )
     r.add_argument("--benchmark", default="AlmgrenChriss")
     r.add_argument(
         "--metric",

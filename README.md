@@ -6,11 +6,24 @@ inventory to sell (or buy) into a simulated limit order book, so as to minimise 
 shortfall, market impact and inventory risk. It is benchmarked against the classical
 strategies used on trading desks, including the closed-form **Almgren-Chriss** optimum.
 
-> **Status (v0.2).** The codebase was cut down to a lean core: Brownian-only market dynamics,
-> two agents, three commands. The v0.1 headline results were withdrawn after an audit showed
-> the reward favoured a do-nothing, dump-at-the-end policy and the published weights could no
-> longer be reproduced. New results will be published from the recalibrated simulator, with
-> confidence intervals across training seeds. See [ROADMAP.md](ROADMAP.md) for the plan.
+> **Results (v0.2): [RESULTS.md](RESULTS.md).** On a recalibrated simulator, with 10 training
+> seeds per configuration and 5,000 held-out test episodes:
+>
+> - With no signal, PPO recovers the closed-form Almgren-Chriss optimum to within
+>   **0.09 bps** (95% CI 0.05–0.12) on a 28.9 bps objective after a GPU tuning study
+>   (pre-registered 2M-step run: 0.47 bps).
+> - With a realistic order-book signal (IC 0.025–0.05), it does **not** beat a two-line rule
+>   that uses the same signal; the tuned policy pulls ahead from IC 0.10.
+> - Out of its training distribution it loses 5.5 bps against the optimum, mostly at twice
+>   the training volatility (and 0.8 bps without that regime and a mean-reverting one where
+>   it beats the optimum).
+> - A batched GPU copy of the environment runs ~29M steps/s and matches the reference to
+>   1e-12.
+>
+> The weights and tables behind every number are committed; `scripts/reproduce.py`
+> re-scores them. The v0.1 results were withdrawn after an audit
+> ([what went wrong](RESULTS.md#what-went-wrong-in-v01-and-how-it-was-found)); see
+> [ROADMAP.md](ROADMAP.md) for the plan.
 
 ---
 
@@ -118,9 +131,12 @@ rl_execution/
 ├── vec/                  # batched torch env (GPU path) + the PPO that trains on it
 ├── training.py           # training + run folders (config, weights, provenance)
 └── cli.py                # rlx train | evaluate | report | sweep
-scripts/    calibrate.py, bench_throughput.py, brownian_demo.py
-scripts/lab/  setup, bring-up check and the Phase 4 run for a GPU machine
+scripts/    calibrate.py, bench_throughput.py, brownian_demo.py,
+            reproduce.py (re-score the committed runs), make_figures.py (RESULTS.md figures)
+scripts/lab/  setup, bring-up check, the Phase 4 run and the tuning study for a GPU machine
 config/     default.yaml
+runs/, results/  the runs and evaluations behind RESULTS.md (weights, configs, tables)
+docs/figures/    RESULTS.md figures (light and dark)
 tests/      pytest suite
 ```
 
@@ -169,7 +185,8 @@ each (`rlx train --seeds 3`, `--seeds 4`, ...; completed seeds are skipped), wit
 
 The **GPU path** is `vecppo`: PPO on the batched environment in `rl_execution/vec/`, which
 steps every episode of a rollout at once. On a laptop CPU it already runs at ~0.9M
-environment steps/s (vs ~5k for the numpy env), and it is built to run on CUDA:
+environment steps/s (vs ~5k for the numpy env); on one lab GPU (RTX 4000 Ada) it reached
+~29M, and a 5M-step VecPPO run takes ~2 minutes:
 
 ```bash
 rlx train --agent vecppo --device cuda --seeds 0-9 --timesteps 5000000 --regime abm_ac_optimal --experiment e1_vec
@@ -212,6 +229,13 @@ optimum. The simulator is a research tool, not a P&L forecast.
 
 ```bash
 python -m pytest -q
+```
+
+To re-score the committed policies and check the published tables (E1 and the tuned
+VecPPO; `--all` for everything):
+
+```bash
+python scripts/reproduce.py --quick
 ```
 
 ## 📦 Requirements

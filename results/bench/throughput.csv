@@ -1,0 +1,16 @@
+what,device,n_envs,steps_per_s,host,torch
+numpy env,cpu,1,26109.67318294501,adminit,2.15.0+cu132
+SB3 PPO,cpu,16,12934.40038496403,adminit,2.15.0+cu132
+batched env,cpu,256,17789.668232090382,adminit,2.15.0+cu132
+batched env,cpu,4096,2964825.3707279675,adminit,2.15.0+cu132
+batched env,cpu,16384,4594343.990120003,adminit,2.15.0+cu132
+VecPPO,cpu,256,30278.378662789066,adminit,2.15.0+cu132
+VecPPO,cpu,4096,44926.198549336,adminit,2.15.0+cu132
+batched env,cuda,256,260884.3043912723,adminit,2.15.0+cu132
+batched env,cuda,4096,4070822.40767254,adminit,2.15.0+cu132
+batched env,cuda,16384,16524671.370192295,adminit,2.15.0+cu132
+batched env,cuda,65536,29175279.486182608,adminit,2.15.0+cu132
+batched env,cuda,262144,28728217.735910963,adminit,2.15.0+cu132
+VecPPO,cuda,256,37079.76909664639,adminit,2.15.0+cu132
+VecPPO,cuda,4096,421073.8914495911,adminit,2.15.0+cu132
+VecPPO,cuda,16384,1345646.999625353,adminit,2.15.0+cu132
